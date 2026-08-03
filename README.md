@@ -80,6 +80,12 @@ you own.
 
 macOS only: it depends on `security(1)` and the `claude` CLI.
 
+## How it works
+
+[`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md) covers the auth model (why
+`setup-token` does not work and login credentials do), where the numbers come
+from, how an account is chosen, and the invariants not to break.
+
 ## Development
 
     bun test              # 117 tests
