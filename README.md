@@ -87,3 +87,7 @@ macOS only: it depends on `security(1)` and the `claude` CLI.
     bun run build
 
 Design and plan documents are under `docs/superpowers/`.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
