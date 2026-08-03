@@ -1,0 +1,112 @@
+import { BAR_CELLS } from './constants'
+import { classify, type Recommendation, type State } from './classify'
+import type { AccountUsage } from './types'
+
+const MS_PER_MINUTE = 60_000
+const MS_PER_HOUR = 3_600_000
+const ESC = ''
+
+const ANSI = {
+  reset: `${ESC}[0m`,
+  dim: `${ESC}[2m`,
+  green: `${ESC}[32m`,
+  yellow: `${ESC}[33m`,
+  red: `${ESC}[31m`,
+  cyan: `${ESC}[36m`,
+} as const
+
+const STATE_MARK: Record<State, string> = {
+  cold: '○ cold',
+  warm: '● warm',
+  hot: '▲ hot',
+  spent: '■ spent',
+  unknown: '✗ error',
+}
+
+const STATE_COLOR: Record<State, string> = {
+  cold: ANSI.cyan,
+  warm: ANSI.green,
+  hot: ANSI.yellow,
+  spent: ANSI.red,
+  unknown: ANSI.red,
+}
+
+export function formatDuration(ms: number): string {
+  if (ms <= 0) return '—'
+  const hours = Math.floor(ms / MS_PER_HOUR)
+  const minutes = Math.floor((ms % MS_PER_HOUR) / MS_PER_MINUTE)
+  return hours > 0 ? `${hours}h${String(minutes).padStart(2, '0')}m` : `${minutes}m`
+}
+
+export function bar(pct: number | null): string {
+  const filled = pct === null ? 0 : Math.round((Math.min(100, Math.max(0, pct)) / 100) * BAR_CELLS)
+  return '▓'.repeat(filled) + '░'.repeat(BAR_CELLS - filled)
+}
+
+export type RenderOptions = { color: boolean; width: number; now: Date }
+
+function paint(text: string, color: string, enabled: boolean): string {
+  return enabled ? `${color}${text}${ANSI.reset}` : text
+}
+
+function pctText(pct: number | null): string {
+  return pct === null ? '0%' : `${pct}%`
+}
+
+function resetText(row: AccountUsage, now: Date): string {
+  if (row.fiveHourResetsAt === null) return '—'
+  return formatDuration(row.fiveHourResetsAt.getTime() - now.getTime())
+}
+
+function renderRow(row: AccountUsage, opts: RenderOptions, labelWidth: number): string {
+  const state = classify(row)
+  const label = row.label.padEnd(labelWidth)
+
+  if (row.error !== null) {
+    const mark = paint(STATE_MARK.unknown, STATE_COLOR.unknown, opts.color)
+    return `${label}  ${mark}  ${row.error.message}`
+  }
+
+  const cells = [
+    label,
+    pctText(row.fiveHourPct).padStart(4),
+    bar(row.fiveHourPct),
+    resetText(row, opts.now).padStart(6),
+    pctText(row.weeklyPct).padStart(6),
+    paint(STATE_MARK[state], STATE_COLOR[state], opts.color),
+  ]
+  const line = cells.join('  ')
+  return row.source === 'probe' ? `${line}  ${paint('(probe)', ANSI.dim, opts.color)}` : line
+}
+
+/**
+ * Pure: TTY-ness, terminal width, and the current time are supplied by the
+ * caller rather than read from the environment, which keeps this testable.
+ */
+export function renderTable(
+  rows: AccountUsage[],
+  rec: Recommendation,
+  opts: RenderOptions,
+): string {
+  if (rows.length === 0) {
+    return 'No subscriptions configured yet.\nAdd one with: cuw add <id>\n'
+  }
+
+  const labelWidth = Math.max(7, ...rows.map(row => row.label.length))
+  const header = paint(
+    `${'ACCOUNT'.padEnd(labelWidth)}  5H WINDOW${' '.repeat(BAR_CELLS - 3)}  RESETS  WEEKLY  STATE`,
+    ANSI.dim,
+    opts.color,
+  )
+  const rule = paint('─'.repeat(Math.min(opts.width, labelWidth + BAR_CELLS + 34)), ANSI.dim, opts.color)
+  const body = rows.map(row => renderRow(row, opts, labelWidth))
+
+  const countdown = rec.earliestResetAt === null
+    ? ''
+    : ` (earliest reset in ${formatDuration(rec.earliestResetAt.getTime() - opts.now.getTime())})`
+  const footer = rec.useId === null
+    ? `\n✗ ${rec.reason}${countdown}`
+    : `\n→ use: ${rec.useId}  (${rec.reason})`
+
+  return [header, rule, ...body, footer, ''].join('\n')
+}
