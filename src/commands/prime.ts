@@ -51,6 +51,11 @@ export async function runPrime(
   deps: PrimeCommandDeps,
   io: Io,
 ): Promise<number> {
+  if (deps.accounts.length === 0) {
+    io.out('No subscriptions configured yet.\nAdd one with: cuw add <id>')
+    return 0
+  }
+
   const targets = await resolveTargets(args, deps, io)
   if (targets === null) return 1
 

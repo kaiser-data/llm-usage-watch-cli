@@ -168,4 +168,13 @@ describe('runPrime', () => {
     expect(await runPrime({ ids: [], cold: true }, commandDeps(), io)).toBe(0)
     expect(out.join('')).toMatch(/already has an open window/i)
   })
+
+  test('points at add when no accounts are configured at all', async () => {
+    const { io, out } = captureIo()
+    const d = commandDeps()
+    d.accounts = []
+    expect(await runPrime({ ids: [], cold: true }, d, io)).toBe(0)
+    expect(out.join('')).toMatch(/cuw add/)
+    expect(out.join('')).not.toMatch(/already has an open window/i)
+  })
 })
