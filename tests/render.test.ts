@@ -16,6 +16,7 @@ function row(partial: Partial<AccountUsage> & { id: string }): AccountUsage {
     weeklyPct: 0,
     weeklyResetsAt: null,
     opusWeeklyPct: null,
+    subscription: null,
     source: 'api',
     error: null,
     ...partial,

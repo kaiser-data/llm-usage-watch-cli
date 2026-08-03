@@ -65,3 +65,4 @@ export const REFRESH_SKEW_MS = 5 * 60_000
 
 /** Keychain service holding the Claude Code login credential blob. */
 export const CLAUDE_CREDENTIAL_SERVICE = 'Claude Code-credentials'
+export const PROFILE_ENDPOINT = 'https://api.anthropic.com/api/oauth/profile'

@@ -32,6 +32,7 @@ export type UsageError = {
 export type AccountUsage = UsageWindows & {
   id: string
   label: string
+  subscription: Subscription | null
   source: 'api' | 'probe' | 'none'
   error: UsageError | null
 }
@@ -46,4 +47,19 @@ export type Credential = {
   /** Epoch milliseconds. */
   expiresAt: number
   scopes: string[]
+}
+
+/** Plan and billing facts, from /api/oauth/profile. */
+export type Subscription = {
+  /** 'pro' | 'max' | the raw organization_type for anything else. */
+  plan: string
+  /** e.g. 'active'. */
+  status: string | null
+  /** When the subscription began. The API exposes no end date. */
+  createdAt: Date | null
+  /** Derived: the next monthly anniversary of createdAt. NOT authoritative — */
+  /** the API reports no billing period, so an annual plan renews later. */
+  renewsAt: Date | null
+  /** Set only while on a Claude Code trial. */
+  trialEndsAt: Date | null
 }

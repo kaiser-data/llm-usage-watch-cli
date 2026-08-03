@@ -1,11 +1,13 @@
 import type { Keychain } from './keychain'
-import type { Account, AccountUsage, UsageError, UsageWindows } from './types'
+import type { Account, AccountUsage, Subscription, UsageError, UsageWindows } from './types'
 import { AuthError } from './usage-api'
 
 export type UsageDeps = {
   keychain: Keychain
   fetchWindows: (token: string) => Promise<UsageWindows>
   probeWindows: (token: string) => Promise<UsageWindows>
+  /** Optional decoration; never fails a row. Defaults to no subscription info. */
+  fetchSubscription?: (token: string) => Promise<Subscription | null>
 }
 
 const EMPTY_WINDOWS: UsageWindows = {
@@ -17,7 +19,14 @@ const EMPTY_WINDOWS: UsageWindows = {
 }
 
 function failed(account: Account, error: UsageError): AccountUsage {
-  return { ...EMPTY_WINDOWS, id: account.id, label: account.label, source: 'none', error }
+  return {
+    ...EMPTY_WINDOWS,
+    id: account.id,
+    label: account.label,
+    subscription: null,
+    source: 'none',
+    error,
+  }
 }
 
 async function collectOne(account: Account, deps: UsageDeps): Promise<AccountUsage> {
@@ -29,9 +38,22 @@ async function collectOne(account: Account, deps: UsageDeps): Promise<AccountUsa
     })
   }
 
+  // Plan info rides along with the usage call rather than after it.
+  const subscriptionPromise = deps.fetchSubscription?.(token) ?? Promise.resolve(null)
+
   try {
-    const windows = await deps.fetchWindows(token)
-    return { ...windows, id: account.id, label: account.label, source: 'api', error: null }
+    const [windows, subscription] = await Promise.all([
+      deps.fetchWindows(token),
+      subscriptionPromise,
+    ])
+    return {
+      ...windows,
+      id: account.id,
+      label: account.label,
+      subscription,
+      source: 'api',
+      error: null,
+    }
   } catch (error) {
     // A rejected token will be rejected by the probe too — do not spend a
     // request, and do not hide an expired credential behind a slower path.
@@ -45,7 +67,14 @@ async function collectOne(account: Account, deps: UsageDeps): Promise<AccountUsa
 
   try {
     const windows = await deps.probeWindows(token)
-    return { ...windows, id: account.id, label: account.label, source: 'probe', error: null }
+    return {
+      ...windows,
+      id: account.id,
+      label: account.label,
+      subscription: await subscriptionPromise,
+      source: 'probe',
+      error: null,
+    }
   } catch {
     return failed(account, {
       cause: 'probe-failed',

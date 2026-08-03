@@ -65,6 +65,26 @@ function countdown(resetsAt: Date | null, now: Date): string {
   return formatDuration(resetsAt.getTime() - now.getTime())
 }
 
+function planText(row: AccountUsage): string {
+  const plan = row.subscription?.plan
+  return plan === undefined || plan === 'unknown' ? '—' : plan
+}
+
+/**
+ * The API exposes no subscription end date, so this is the next monthly
+ * anniversary of the start date — an estimate, marked with `~`. A trial end
+ * date, when present, is real and takes precedence.
+ */
+function renewalText(row: AccountUsage, now: Date): string {
+  const subscription = row.subscription
+  if (!subscription) return '—'
+  if (subscription.trialEndsAt !== null) {
+    return `trial ${countdown(subscription.trialEndsAt, now)}`
+  }
+  if (subscription.renewsAt === null) return '—'
+  return `~${countdown(subscription.renewsAt, now)}`
+}
+
 function renderRow(row: AccountUsage, opts: RenderOptions, labelWidth: number): string {
   const state = classify(row)
   const label = row.label.padEnd(labelWidth)
@@ -76,12 +96,14 @@ function renderRow(row: AccountUsage, opts: RenderOptions, labelWidth: number): 
 
   const cells = [
     label,
+    planText(row).padEnd(4),
     pctText(row.fiveHourPct).padStart(4),
     bar(row.fiveHourPct),
     countdown(row.fiveHourResetsAt, opts.now).padStart(6),
     pctText(row.weeklyPct).padStart(5),
     bar(row.weeklyPct),
     countdown(row.weeklyResetsAt, opts.now).padStart(6),
+    renewalText(row, opts.now).padStart(7),
     paint(STATE_MARK[state], STATE_COLOR[state], opts.color),
   ]
   const line = cells.join('  ')
@@ -105,16 +127,18 @@ export function renderTable(
   const header = paint(
     [
       'ACCOUNT'.padEnd(labelWidth),
+      'PLAN',
       `5H WINDOW${' '.repeat(BAR_CELLS - 3)}`,
       'RESETS',
       `WEEKLY${' '.repeat(BAR_CELLS - 2)}`,
       'RESETS',
+      ' RENEWS',
       'STATE',
     ].join('  '),
     ANSI.dim,
     opts.color,
   )
-  const ruleWidth = labelWidth + 2 * BAR_CELLS + 43
+  const ruleWidth = labelWidth + 2 * BAR_CELLS + 57
   const rule = paint('─'.repeat(Math.min(opts.width, ruleWidth)), ANSI.dim, opts.color)
   const body = rows.map(row => renderRow(row, opts, labelWidth))
 
