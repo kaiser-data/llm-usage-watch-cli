@@ -7,7 +7,7 @@ const ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/
 export type RegistryErrorCause = 'malformed' | 'duplicate-id' | 'invalid-id'
 
 export class RegistryError extends Error {
-  constructor(message: string, readonly cause: RegistryErrorCause) {
+  constructor(message: string, override readonly cause: RegistryErrorCause) {
     super(message)
     this.name = 'RegistryError'
   }

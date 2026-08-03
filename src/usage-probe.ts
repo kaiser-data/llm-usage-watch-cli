@@ -7,7 +7,8 @@ function headerMap(debugLog: string): Map<string, string> {
   const map = new Map<string, string>()
   for (const line of debugLog.split('\n')) {
     const match = line.match(/([A-Za-z0-9-]*ratelimit[A-Za-z0-9-]*)\s*:\s*(\S+)/i)
-    if (match) map.set(match[1].toLowerCase(), match[2])
+    const [, name, value] = match ?? []
+    if (name !== undefined && value !== undefined) map.set(name.toLowerCase(), value)
   }
   return map
 }

@@ -2,8 +2,14 @@
 import { mkdir, mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DEFAULT_TERM_WIDTH, REQUEST_TIMEOUT_MS, USAGE_ENDPOINTS } from './constants'
+import {
+  CLAUDE_CREDENTIAL_SERVICE,
+  DEFAULT_TERM_WIDTH,
+  REQUEST_TIMEOUT_MS,
+  USAGE_ENDPOINTS,
+} from './constants'
 import { createKeychain, realRunner } from './keychain'
+import { createRefreshingTokenSource } from './token-source'
 import { loadRegistry, registryPath } from './registry'
 import { realSpawner } from './spawn'
 import { fetchUsage } from './usage-api'
@@ -37,8 +43,21 @@ export function configHome(): string {
   return join(home(), '.config', 'cuw')
 }
 
+/** Reads the credential blob the current `claude auth login` session holds. */
+export async function readLoginCredential(): Promise<string | null> {
+  const result = await realRunner([
+    'security', 'find-generic-password', '-s', CLAUDE_CREDENTIAL_SERVICE, '-w',
+  ])
+  if (result.code !== 0) return null
+  const blob = result.stdout.trim()
+  return blob === '' ? null : blob
+}
+
 export async function buildUsageDeps(): Promise<UsageDeps> {
-  const keychain = createKeychain(realRunner)
+  const keychain = createRefreshingTokenSource(createKeychain(realRunner), {
+    fetcher: fetch,
+    now: () => Date.now(),
+  })
   const scratchDir = await mkdtemp(join(tmpdir(), 'cuw-scratch-'))
 
   // Test-only, read-only escape hatches used by the integration suite to point
@@ -115,14 +134,7 @@ export async function main(argv: string[]): Promise<number> {
       return runAdd(id, {
         registryFile: registryPath(home()),
         keychain: createKeychain(realRunner),
-        readToken: readLine,
-        verify: async token => {
-          await fetchUsage(token, {
-            fetcher: fetch,
-            endpoint: USAGE_ENDPOINTS[0],
-            timeoutMs: REQUEST_TIMEOUT_MS,
-          })
-        },
+        readLoginCredential,
       }, io)
     }
 

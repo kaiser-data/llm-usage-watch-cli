@@ -50,3 +50,18 @@ export const HEADER_KEYS = {
   weeklyRemaining: 'anthropic-ratelimit-unified-7d-remaining',
   opusWeeklyRemaining: 'anthropic-ratelimit-unified-7d-opus-remaining',
 } as const
+
+/** OAuth token endpoint used to refresh an expired access token. */
+export const OAUTH_TOKEN_ENDPOINT = 'https://platform.claude.com/v1/oauth/token'
+
+/** Claude Code's public OAuth client id, as embedded in the CLI. */
+export const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
+
+/** Scope required to read /api/oauth/usage. Setup-tokens lack it. */
+export const REQUIRED_SCOPE = 'user:profile'
+
+/** Refresh this long before actual expiry, to avoid racing the clock. */
+export const REFRESH_SKEW_MS = 5 * 60_000
+
+/** Keychain service holding the Claude Code login credential blob. */
+export const CLAUDE_CREDENTIAL_SERVICE = 'Claude Code-credentials'

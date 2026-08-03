@@ -1,3 +1,4 @@
+import { parseCredential, serializeCredential } from '../credentials'
 import type { Keychain } from '../keychain'
 import { loadRegistry, RegistryError, saveRegistry } from '../registry'
 import type { Io } from './status'
@@ -5,22 +6,21 @@ import type { Io } from './status'
 export type AddDeps = {
   registryFile: string
   keychain: Keychain
-  readToken: () => Promise<string>
-  verify: (token: string) => Promise<void>
+  /** Reads the blob `claude auth login` stored, or null if not logged in. */
+  readLoginCredential: () => Promise<string | null>
 }
 
-const INSTRUCTIONS = `Log into this subscription in another terminal, then run:
-
-  claude setup-token
-
-Paste the token it prints below and press Enter. It is read from stdin, so it
-never reaches your shell history.
-`
+const NOT_LOGGED_IN =
+  'no Claude Code login found. Run `claude auth login` for the subscription you ' +
+  'want to add, then run this command again.'
 
 /**
- * `label` mirrors the id and `email` is left empty: the usage endpoint does not
- * return an email, and every command and the table key off the id. Populating
- * `email` is deferred rather than guessed at.
+ * Captures a copy of the credential the current `claude auth login` session
+ * holds. A `setup-token` is deliberately not accepted: it carries
+ * `user:inference` only and is refused by the usage endpoint with HTTP 403.
+ *
+ * `label` mirrors the id and `email` is left empty: the usage endpoint returns
+ * no email, and every command keys off the id.
  */
 export async function runAdd(id: string, deps: AddDeps, io: Io): Promise<number> {
   const accounts = await loadRegistry(deps.registryFile)
@@ -29,18 +29,18 @@ export async function runAdd(id: string, deps: AddDeps, io: Io): Promise<number>
     return 1
   }
 
-  io.out(INSTRUCTIONS)
-  const token = (await deps.readToken()).trim()
-  if (token === '') {
-    io.err('no token entered; nothing was stored')
-    return 1
+  const blob = await deps.readLoginCredential()
+  if (blob === null) {
+    io.err(NOT_LOGGED_IN)
+    return 2
   }
 
+  let credential
   try {
-    await deps.verify(token)
+    credential = parseCredential(blob)
   } catch (error) {
-    // The verifier's message is already token-free by construction.
-    io.err(`token verification failed: ${(error as Error).message}`)
+    // parseCredential's messages are token-free and carry the remedy.
+    io.err(`cannot use the current login: ${(error as Error).message}`)
     io.err('nothing was stored')
     return 2
   }
@@ -59,7 +59,7 @@ export async function runAdd(id: string, deps: AddDeps, io: Io): Promise<number>
     throw error
   }
 
-  await deps.keychain.set(id, token)
+  await deps.keychain.set(id, serializeCredential(credential))
   io.out(`stored "${id}" — run \`cuw\` to see it`)
   return 0
 }

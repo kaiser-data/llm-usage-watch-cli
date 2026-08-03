@@ -47,9 +47,9 @@ describe('runStatus', () => {
     const { io, out } = captureIo()
     await runStatus({ json: true }, deps(), io)
     const parsed = JSON.parse(out.join(''))
-    expect(parsed[0].id).toBe('main')
-    expect(parsed[0].fiveHourPct).toBe(12)
-    expect(parsed[0].state).toBe('warm')
+    expect(parsed[0]!.id).toBe('main')
+    expect(parsed[0]!.fiveHourPct).toBe(12)
+    expect(parsed[0]!.state).toBe('warm')
   })
 
   test('JSON output never contains a token', async () => {

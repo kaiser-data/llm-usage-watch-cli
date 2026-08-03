@@ -53,11 +53,12 @@ export function recommend(rows: AccountUsage[]): Recommendation {
     }
   }
 
-  const best = [...usable].sort((a, b) => {
-    const byFiveHour = fiveHourHeadroom(b) - fiveHourHeadroom(a)
-    if (byFiveHour !== 0) return byFiveHour
-    return weeklyHeadroom(b) - weeklyHeadroom(a)
-  })[0]
+  // reduce, not sort()[0]: it returns the element type, not `T | undefined`.
+  const best = usable.reduce((winner, candidate) => {
+    const byFiveHour = fiveHourHeadroom(candidate) - fiveHourHeadroom(winner)
+    if (byFiveHour !== 0) return byFiveHour > 0 ? candidate : winner
+    return weeklyHeadroom(candidate) > weeklyHeadroom(winner) ? candidate : winner
+  })
 
   const state = classify(best)
   const reason = state === 'cold'

@@ -45,20 +45,20 @@ describe('primeAccount', () => {
   test('sends the token by environment, never by argv', async () => {
     const d = deps()
     await primeAccount(account, 'sk-secret', d)
-    expect(d.calls[0].argv.join(' ')).not.toContain('sk-secret')
-    expect(d.calls[0].env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-secret')
+    expect(d.calls[0]!.argv.join(' ')).not.toContain('sk-secret')
+    expect(d.calls[0]!.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-secret')
   })
 
   test('uses the isolated, minimal flag set', async () => {
     const d = deps()
     await primeAccount(account, 'tok', d)
-    const argv = d.calls[0].argv.join(' ')
+    const argv = d.calls[0]!.argv.join(' ')
     expect(argv).toContain(`--model ${PRIME_MODEL}`)
     expect(argv).toContain(`-p ${PRIME_PROMPT}`)
     expect(argv).toContain('--safe-mode')
     expect(argv).toContain('--no-session-persistence')
-    expect(d.calls[0].env.CLAUDE_CONFIG_DIR).toBe('/tmp/cuw-profile')
-    expect(d.calls[0].cwd).toBe('/tmp/cuw-empty')
+    expect(d.calls[0]!.env.CLAUDE_CONFIG_DIR).toBe('/tmp/cuw-profile')
+    expect(d.calls[0]!.cwd).toBe('/tmp/cuw-empty')
   })
 
   test('reports success with the reset time once a window is open', async () => {

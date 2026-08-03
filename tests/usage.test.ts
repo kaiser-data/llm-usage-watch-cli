@@ -41,9 +41,9 @@ describe('collectUsage', () => {
       get: async (id: string) => (id === 'a' ? null : 'tok'),
       set: async () => {}, remove: async () => {},
     } }))
-    expect(rows[0].error?.cause).toBe('no-token')
-    expect(rows[0].source).toBe('none')
-    expect(rows[1].error).toBeNull()
+    expect(rows[0]!.error?.cause).toBe('no-token')
+    expect(rows[0]!.source).toBe('none')
+    expect(rows[1]!.error).toBeNull()
   })
 
   test('does not fall back to probe on an auth failure', async () => {
@@ -53,23 +53,23 @@ describe('collectUsage', () => {
       probeWindows: async () => { probed = true; return WINDOWS },
     }))
     expect(probed).toBe(false)
-    expect(rows[0].error?.cause).toBe('auth')
+    expect(rows[0]!.error?.cause).toBe('auth')
   })
 
   test('falls back to probe on a schema failure', async () => {
     const rows = await collectUsage(accounts, deps({
       fetchWindows: async () => { throw new SchemaError('unrecognized') },
     }))
-    expect(rows[0].source).toBe('probe')
-    expect(rows[0].error).toBeNull()
-    expect(rows[0].fiveHourPct).toBe(20)
+    expect(rows[0]!.source).toBe('probe')
+    expect(rows[0]!.error).toBeNull()
+    expect(rows[0]!.fiveHourPct).toBe(20)
   })
 
   test('falls back to probe on a network failure', async () => {
     const rows = await collectUsage(accounts, deps({
       fetchWindows: async () => { throw new TypeError('fetch failed') },
     }))
-    expect(rows[0].source).toBe('probe')
+    expect(rows[0]!.source).toBe('probe')
   })
 
   test('reports probe-failed when both paths fail', async () => {
@@ -77,9 +77,9 @@ describe('collectUsage', () => {
       fetchWindows: async () => { throw new SchemaError('unrecognized') },
       probeWindows: async () => { throw new Error('probe failed (exit 1)') },
     }))
-    expect(rows[0].error?.cause).toBe('probe-failed')
-    expect(rows[0].source).toBe('none')
-    expect(rows[0].fiveHourPct).toBeNull()
+    expect(rows[0]!.error?.cause).toBe('probe-failed')
+    expect(rows[0]!.source).toBe('none')
+    expect(rows[0]!.fiveHourPct).toBeNull()
   })
 
   test('one failing account does not affect the others', async () => {
@@ -93,9 +93,9 @@ describe('collectUsage', () => {
         set: async () => {}, remove: async () => {},
       },
     }))
-    expect(rows[0].error?.cause).toBe('auth')
-    expect(rows[1].error).toBeNull()
-    expect(rows[1].fiveHourPct).toBe(20)
+    expect(rows[0]!.error?.cause).toBe('auth')
+    expect(rows[1]!.error).toBeNull()
+    expect(rows[1]!.fiveHourPct).toBe(20)
   })
 
   test('runs accounts concurrently', async () => {

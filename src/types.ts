@@ -35,3 +35,15 @@ export type AccountUsage = UsageWindows & {
   source: 'api' | 'probe' | 'none'
   error: UsageError | null
 }
+
+/**
+ * A full-scope Claude Code login credential. Setup-tokens are deliberately not
+ * representable here: they carry `user:inference` only and cannot read usage.
+ */
+export type Credential = {
+  accessToken: string
+  refreshToken: string
+  /** Epoch milliseconds. */
+  expiresAt: number
+  scopes: string[]
+}

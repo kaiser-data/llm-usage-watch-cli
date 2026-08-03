@@ -68,7 +68,7 @@ describe('probeUsage', () => {
   test('invokes claude with the minimal isolated flag set', async () => {
     const { calls, deps } = harness({ code: 0, stderrTail: '' }, SAMPLE)
     await probeUsage('tok', deps)
-    const argv = calls[0].argv.join(' ')
+    const argv = calls[0]!.argv.join(' ')
     expect(argv).toContain('--safe-mode')
     expect(argv).toContain('--no-session-persistence')
     expect(argv).toContain('--debug api')
@@ -77,10 +77,10 @@ describe('probeUsage', () => {
   test('passes the token by environment, never by argv', async () => {
     const { calls, deps } = harness({ code: 0, stderrTail: '' }, SAMPLE)
     await probeUsage('sk-secret', deps)
-    expect(calls[0].argv.join(' ')).not.toContain('sk-secret')
-    expect(calls[0].env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-secret')
-    expect(calls[0].env.CLAUDE_CONFIG_DIR).toBe('/tmp/cuw-profile')
-    expect(calls[0].cwd).toBe('/tmp/cuw-empty')
+    expect(calls[0]!.argv.join(' ')).not.toContain('sk-secret')
+    expect(calls[0]!.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-secret')
+    expect(calls[0]!.env.CLAUDE_CONFIG_DIR).toBe('/tmp/cuw-profile')
+    expect(calls[0]!.cwd).toBe('/tmp/cuw-empty')
   })
 
   test('throws when the claude invocation fails', async () => {
