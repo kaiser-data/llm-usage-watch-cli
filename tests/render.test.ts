@@ -35,6 +35,14 @@ describe('formatDuration', () => {
     expect(formatDuration(0)).toBe('—')
     expect(formatDuration(-5)).toBe('—')
   })
+
+  test('renders days and hours once past a day, for weekly resets', () => {
+    expect(formatDuration(2 * 86_400_000 + 5 * 3_600_000)).toBe('2d5h')
+  })
+
+  test('renders whole days without an hour part', () => {
+    expect(formatDuration(3 * 86_400_000)).toBe('3d')
+  })
 })
 
 describe('bar', () => {
@@ -106,6 +114,31 @@ describe('renderTable', () => {
     const broken = [row({ id: 'main', error: { cause: 'auth', message: 'token rejected' } })]
     const output = renderTable(broken, recommend(broken), OPTS)
     expect(output).toContain('token rejected')
+  })
+
+  test('shows a weekly bar and a weekly reset countdown', () => {
+    const withWeekly = [row({
+      id: 'main',
+      fiveHourPct: 12,
+      fiveHourResetsAt: new Date('2026-08-03T11:41:00Z'),
+      weeklyPct: 60,
+      weeklyResetsAt: new Date('2026-08-05T08:00:00Z'),
+    })]
+    const output = renderTable(withWeekly, recommend(withWeekly), OPTS)
+    expect(output).toContain('60%')
+    expect(output).toContain('2d')
+    expect(output).toContain('WEEKLY')
+  })
+
+  test('names the weekly limit in the footer when it binds', () => {
+    const bound = [row({
+      id: 'main',
+      fiveHourPct: 5,
+      fiveHourResetsAt: new Date('2026-08-03T11:41:00Z'),
+      weeklyPct: 90,
+      weeklyResetsAt: new Date('2026-08-05T08:00:00Z'),
+    })]
+    expect(renderTable(bound, recommend(bound), OPTS)).toMatch(/weekly limit left/i)
   })
 
   test('renders a first-run message for an empty list', () => {

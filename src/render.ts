@@ -4,6 +4,7 @@ import type { AccountUsage } from './types'
 
 const MS_PER_MINUTE = 60_000
 const MS_PER_HOUR = 3_600_000
+const MS_PER_DAY = 86_400_000
 const ESC = ''
 
 const ANSI = {
@@ -33,6 +34,12 @@ const STATE_COLOR: Record<State, string> = {
 
 export function formatDuration(ms: number): string {
   if (ms <= 0) return '—'
+  // Weekly resets are days away; minutes are noise at that range.
+  if (ms >= MS_PER_DAY) {
+    const days = Math.floor(ms / MS_PER_DAY)
+    const hours = Math.floor((ms % MS_PER_DAY) / MS_PER_HOUR)
+    return hours > 0 ? `${days}d${hours}h` : `${days}d`
+  }
   const hours = Math.floor(ms / MS_PER_HOUR)
   const minutes = Math.floor((ms % MS_PER_HOUR) / MS_PER_MINUTE)
   return hours > 0 ? `${hours}h${String(minutes).padStart(2, '0')}m` : `${minutes}m`
@@ -53,9 +60,9 @@ function pctText(pct: number | null): string {
   return pct === null ? '0%' : `${pct}%`
 }
 
-function resetText(row: AccountUsage, now: Date): string {
-  if (row.fiveHourResetsAt === null) return '—'
-  return formatDuration(row.fiveHourResetsAt.getTime() - now.getTime())
+function countdown(resetsAt: Date | null, now: Date): string {
+  if (resetsAt === null) return '—'
+  return formatDuration(resetsAt.getTime() - now.getTime())
 }
 
 function renderRow(row: AccountUsage, opts: RenderOptions, labelWidth: number): string {
@@ -71,8 +78,10 @@ function renderRow(row: AccountUsage, opts: RenderOptions, labelWidth: number): 
     label,
     pctText(row.fiveHourPct).padStart(4),
     bar(row.fiveHourPct),
-    resetText(row, opts.now).padStart(6),
-    pctText(row.weeklyPct).padStart(6),
+    countdown(row.fiveHourResetsAt, opts.now).padStart(6),
+    pctText(row.weeklyPct).padStart(5),
+    bar(row.weeklyPct),
+    countdown(row.weeklyResetsAt, opts.now).padStart(6),
     paint(STATE_MARK[state], STATE_COLOR[state], opts.color),
   ]
   const line = cells.join('  ')
@@ -94,11 +103,19 @@ export function renderTable(
 
   const labelWidth = Math.max(7, ...rows.map(row => row.label.length))
   const header = paint(
-    `${'ACCOUNT'.padEnd(labelWidth)}  5H WINDOW${' '.repeat(BAR_CELLS - 3)}  RESETS  WEEKLY  STATE`,
+    [
+      'ACCOUNT'.padEnd(labelWidth),
+      `5H WINDOW${' '.repeat(BAR_CELLS - 3)}`,
+      'RESETS',
+      `WEEKLY${' '.repeat(BAR_CELLS - 2)}`,
+      'RESETS',
+      'STATE',
+    ].join('  '),
     ANSI.dim,
     opts.color,
   )
-  const rule = paint('─'.repeat(Math.min(opts.width, labelWidth + BAR_CELLS + 34)), ANSI.dim, opts.color)
+  const ruleWidth = labelWidth + 2 * BAR_CELLS + 43
+  const rule = paint('─'.repeat(Math.min(opts.width, ruleWidth)), ANSI.dim, opts.color)
   const body = rows.map(row => renderRow(row, opts, labelWidth))
 
   const countdown = rec.earliestResetAt === null

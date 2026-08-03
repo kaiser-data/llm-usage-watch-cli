@@ -105,6 +105,40 @@ describe('recommend', () => {
     expect(result.reason).toMatch(/all accounts/i)
   })
 
+  test('avoids an account whose weekly limit is nearly exhausted', () => {
+    const result = recommend([
+      // Free five-hour window, but almost no weekly budget left.
+      row({ id: 'a', fiveHourPct: 0, fiveHourResetsAt: new Date(), weeklyPct: 96 }),
+      // Half its session used, but plenty of weekly budget.
+      row({ id: 'b', fiveHourPct: 50, fiveHourResetsAt: new Date(), weeklyPct: 20 }),
+    ])
+    expect(result.useId).toBe('b')
+  })
+
+  test('names the weekly limit when it is the binding constraint', () => {
+    const result = recommend([
+      row({ id: 'a', fiveHourPct: 10, fiveHourResetsAt: new Date(), weeklyPct: 80 }),
+    ])
+    expect(result.reason).toMatch(/weekly/i)
+    expect(result.reason).toContain('20%')
+  })
+
+  test('names the session limit when it is the binding constraint', () => {
+    const result = recommend([
+      row({ id: 'a', fiveHourPct: 80, fiveHourResetsAt: new Date(), weeklyPct: 10 }),
+    ])
+    expect(result.reason).toMatch(/five-hour|session/i)
+    expect(result.reason).toContain('20%')
+  })
+
+  test('treats a weekly-exhausted account as unusable', () => {
+    const result = recommend([
+      row({ id: 'a', fiveHourPct: 0, fiveHourResetsAt: new Date(), weeklyPct: 100 }),
+      row({ id: 'b', fiveHourPct: 90, fiveHourResetsAt: new Date(), weeklyPct: 30 }),
+    ])
+    expect(result.useId).toBe('b')
+  })
+
   test('handles an empty account list', () => {
     const result = recommend([])
     expect(result.useId).toBeNull()
