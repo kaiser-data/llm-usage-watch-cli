@@ -16,7 +16,7 @@ import { createRefreshingTokenSource } from './token-source'
 import { loadRegistry, registryPath } from './registry'
 import { realSpawner } from './spawn'
 import { fetchUsage } from './usage-api'
-import { fetchSubscription } from './profile'
+import { fetchIdentity, fetchSubscription } from './profile'
 import { probeUsage } from './usage-probe'
 import { EXIT_OK, EXIT_USAGE, runStatus, type Io } from './commands/status'
 import { runAdd } from './commands/add'
@@ -150,6 +150,12 @@ export async function main(argv: string[]): Promise<number> {
         registryFile: registryPath(home()),
         keychain: createKeychain(realRunner),
         readLoginCredential,
+        fetchIdentity: token => fetchIdentity(token, {
+          fetcher: fetch,
+          endpoint: PROFILE_ENDPOINT,
+          timeoutMs: REQUEST_TIMEOUT_MS,
+          now: new Date(),
+        }),
       }, io)
     }
 
