@@ -74,6 +74,17 @@ export function normalizeProfile(raw: unknown, now: Date): Subscription {
   }
 }
 
+/** Who a credential belongs to. Used to name and protect the outgoing login. */
+export type Identity = { uuid: string; email: string }
+
+export function normalizeIdentity(raw: unknown): Identity | null {
+  const account = asRecord(asRecord(raw)?.account)
+  const uuid = account?.uuid
+  if (typeof uuid !== 'string' || uuid === '') return null
+  const email = account?.email
+  return { uuid, email: typeof email === 'string' ? email : '' }
+}
+
 export type ProfileDeps = {
   fetcher: typeof fetch
   endpoint: string
@@ -81,14 +92,8 @@ export type ProfileDeps = {
   now: Date
 }
 
-/**
- * Returns null on any failure. Plan info is a nice-to-have decoration: it must
- * never turn a usable usage row into an error row.
- */
-export async function fetchSubscription(
-  token: string,
-  deps: ProfileDeps,
-): Promise<Subscription | null> {
+/** Returns the parsed profile payload, or null on any failure. */
+async function requestProfile(token: string, deps: ProfileDeps): Promise<unknown | null> {
   try {
     const response = await deps.fetcher(deps.endpoint, {
       headers: {
@@ -99,8 +104,34 @@ export async function fetchSubscription(
       signal: AbortSignal.timeout(deps.timeoutMs),
     })
     if (!response.ok) return null
-    return normalizeProfile(await response.json(), deps.now)
+    return await response.json()
   } catch {
     return null
   }
+}
+
+/**
+ * Returns null on any failure. Plan info is a nice-to-have decoration: it must
+ * never turn a usable usage row into an error row.
+ */
+export async function fetchSubscription(
+  token: string,
+  deps: ProfileDeps,
+): Promise<Subscription | null> {
+  const payload = await requestProfile(token, deps)
+  if (payload === null) return null
+  try {
+    return normalizeProfile(payload, deps.now)
+  } catch {
+    return null
+  }
+}
+
+/** Null when the profile cannot be read or carries no account uuid. */
+export async function fetchIdentity(
+  token: string,
+  deps: ProfileDeps,
+): Promise<Identity | null> {
+  const payload = await requestProfile(token, deps)
+  return payload === null ? null : normalizeIdentity(payload)
 }
