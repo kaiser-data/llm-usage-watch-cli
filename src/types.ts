@@ -29,6 +29,33 @@ export type UsageError = {
   message: string
 }
 
+export type CodexErrorCause =
+  | 'not-installed'
+  | 'not-logged-in'
+  | 'timeout'
+  | 'protocol'
+  | 'process'
+
+export type CodexUsageWindow = {
+  role: 'primary' | 'secondary'
+  usedPct: number
+  durationMinutes: number | null
+  resetsAt: Date | null
+}
+
+export type CodexUsageLimit = {
+  id: string
+  name: string | null
+  windows: CodexUsageWindow[]
+}
+
+export type CodexUsage = {
+  provider: 'codex'
+  plan: string | null
+  limits: CodexUsageLimit[]
+  error: { cause: CodexErrorCause; message: string } | null
+}
+
 export type AccountUsage = UsageWindows & {
   id: string
   label: string
