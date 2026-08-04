@@ -3,6 +3,8 @@ export type Account = {
   label: string
   email: string
   order: number
+  /** The profile endpoint's `account.uuid`. Absent on pre-switching entries. */
+  uuid?: string
 }
 
 /** Usage figures for one account, independent of which path produced them. */
