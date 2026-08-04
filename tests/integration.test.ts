@@ -113,4 +113,16 @@ describe('cuw end to end', () => {
     const { code } = await runCli(['bogus'])
     expect(code).toBe(1)
   })
+
+  test('lists the use command in help', async () => {
+    const { stdout } = await runCli(['--help'])
+    expect(stdout).toContain('cuw use')
+  })
+
+  test('rejects `use` with an unknown account id', async () => {
+    // The suite's registry holds only `main`, so this is rejected before any
+    // real Keychain access happens.
+    const { code } = await runCli(['use', 'nope'])
+    expect(code).toBe(2)
+  })
 })

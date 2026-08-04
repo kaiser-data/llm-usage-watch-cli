@@ -70,3 +70,27 @@ describe('saveRegistry', () => {
       .rejects.toThrow(/invalid id/i)
   })
 })
+
+describe('account uuid', () => {
+  test('preserves an account uuid across a save and load', async () => {
+    const path = join(await scratch(), 'accounts.json')
+    await saveRegistry(path, [
+      { id: 'main', label: 'main', email: 'a@b.c', order: 1, uuid: 'acc-123' },
+    ])
+    expect((await loadRegistry(path))[0]?.uuid).toBe('acc-123')
+  })
+
+  test('accepts an account without a uuid', async () => {
+    const path = join(await scratch(), 'accounts.json')
+    await saveRegistry(path, [{ id: 'main', label: 'main', email: '', order: 1 }])
+    expect((await loadRegistry(path))[0]?.uuid).toBeUndefined()
+  })
+
+  test('rejects a non-string uuid', async () => {
+    const path = join(await scratch(), 'accounts.json')
+    await writeFile(path, JSON.stringify([
+      { id: 'main', label: 'main', email: '', order: 1, uuid: 7 },
+    ]), 'utf8')
+    await expect(loadRegistry(path)).rejects.toThrow(RegistryError)
+  })
+})

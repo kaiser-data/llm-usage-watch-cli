@@ -34,7 +34,18 @@ function assertAccount(raw: unknown, index: number): Account {
   if (!ID_PATTERN.test(id)) {
     throw new RegistryError(`invalid id "${id}": use lowercase letters, digits, - and _`, 'invalid-id')
   }
-  return { id, label: entry.label as string, email: entry.email as string, order: entry.order }
+  const uuid = entry.uuid
+  if (uuid !== undefined && typeof uuid !== 'string') {
+    throw new RegistryError(`entry ${index} has a non-string "uuid"`, 'malformed')
+  }
+  return {
+    id,
+    label: entry.label as string,
+    email: entry.email as string,
+    order: entry.order,
+    // Spread, so an absent uuid stays absent rather than serializing as null.
+    ...(uuid === undefined ? {} : { uuid }),
+  }
 }
 
 function assertUniqueIds(accounts: Account[]): void {

@@ -37,6 +37,7 @@ async function deps(overrides: Partial<AddDeps> = {}): Promise<AddDeps & { store
       remove: async id => { stored.delete(id) },
     },
     readLoginCredential: async () => loginBlob(),
+    fetchIdentity: async () => ({ uuid: 'acc-existing', email: 'existing@example.com' }),
     ...overrides,
   }
 }
@@ -104,5 +105,29 @@ describe('runAdd', () => {
     await runAdd('one', d, io)
     await runAdd('two', d, io)
     expect((await loadRegistry(d.registryFile)).map(a => a.order)).toEqual([1, 2])
+  })
+})
+
+describe('runAdd identity', () => {
+  test('records the account uuid and email from the profile', async () => {
+    const { io, out } = captureIo()
+    const d = await deps({
+      fetchIdentity: async () => ({ uuid: 'acc-123', email: 'someone@example.com' }),
+    })
+
+    expect(await runAdd('main', d, io)).toBe(0)
+    const stored = await loadRegistry(d.registryFile)
+    expect(stored[0]?.uuid).toBe('acc-123')
+    expect(stored[0]?.email).toBe('someone@example.com')
+    expect(out.join('\n')).not.toContain('access-secret')
+  })
+
+  test('refuses to store an account whose identity cannot be read', async () => {
+    const { io } = captureIo()
+    const d = await deps({ fetchIdentity: async () => null })
+
+    expect(await runAdd('main', d, io)).toBe(2)
+    expect(await loadRegistry(d.registryFile)).toEqual([])
+    expect(d.stored.get('main')).toBeUndefined()
   })
 })

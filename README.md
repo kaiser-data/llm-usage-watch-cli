@@ -45,6 +45,8 @@ emails, conversations, or session files directly.
 
     cuw                     # Claude table plus active Codex usage
     cuw status --json       # { "claude": [...], "codex": {...} }
+    cuw use                 # switch the login to the recommended account
+    cuw use work            # switch the login to a named account
     cuw prime work          # start the five-hour window on one account
     cuw prime --cold        # start it on every idle account
     cuw doctor              # diagnose tokens and data paths
@@ -86,6 +88,25 @@ For Codex, `cuw` starts `codex app-server`, performs its JSONL initialization
 handshake, reads `account/rateLimits/read`, and terminates the child. Claude and
 Codex are collected concurrently. The Codex path makes no inference request and
 does not depend on an existing Codex session.
+
+## Switching accounts
+
+`cuw use` rewrites the Claude Code login in the Keychain. New `claude` sessions
+and the desktop app pick up the new account; sessions already running keep the
+one they started with. Without an id it switches to the account the status
+footer recommends.
+
+That Keychain item also holds the OAuth tokens of every connected MCP server, so
+the switch merges into it rather than replacing it — your MCP connections
+survive. If the login about to be replaced is not one `cuw` tracks, it is stored
+as a new account first, so you can always switch back.
+
+Accounts added before this feature existed were stored without the full login
+blob. `cuw use` refuses them; re-add each one once:
+
+    claude auth login        # for that subscription
+    cuw rm work
+    cuw add work
 
 ## Priming cost
 

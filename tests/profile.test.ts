@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test'
-import { fetchSubscription, nextMonthlyAnniversary, normalizeProfile } from '../src/profile'
+import {
+  fetchIdentity,
+  fetchSubscription,
+  nextMonthlyAnniversary,
+  normalizeIdentity,
+  normalizeProfile,
+} from '../src/profile'
 import { SchemaError } from '../src/usage-api'
 
 const CREATED = '2026-07-28T10:32:23.265057Z'
@@ -112,5 +118,48 @@ describe('fetchSubscription', () => {
       fetcher, endpoint: 'https://x/profile', timeoutMs: 1000, now: new Date(),
     })
     expect(result).toBeNull()
+  })
+})
+
+describe('normalizeIdentity', () => {
+  test('extracts the account uuid and email', () => {
+    const identity = normalizeIdentity({
+      account: { uuid: 'acc-123', email: 'someone@example.com' },
+    })
+    expect(identity).toEqual({ uuid: 'acc-123', email: 'someone@example.com' })
+  })
+
+  test('returns null when the payload carries no account uuid', () => {
+    expect(normalizeIdentity({ account: {} })).toBeNull()
+    expect(normalizeIdentity('nope')).toBeNull()
+  })
+
+  test('tolerates a missing email', () => {
+    expect(normalizeIdentity({ account: { uuid: 'acc-123' } })).toEqual({
+      uuid: 'acc-123',
+      email: '',
+    })
+  })
+})
+
+describe('fetchIdentity', () => {
+  test('returns the identity on a successful response', async () => {
+    const fetcher = (async () => new Response(
+      JSON.stringify({ account: { uuid: 'acc-123', email: 'a@b.c' } }),
+      { status: 200 },
+    )) as unknown as typeof fetch
+
+    const identity = await fetchIdentity('tok', {
+      fetcher, endpoint: 'https://x/profile', timeoutMs: 1000, now: new Date(),
+    })
+    expect(identity?.uuid).toBe('acc-123')
+  })
+
+  test('returns null when the endpoint rejects the token', async () => {
+    const fetcher = (async () => new Response('{}', { status: 403 })) as unknown as typeof fetch
+    const identity = await fetchIdentity('tok', {
+      fetcher, endpoint: 'https://x/profile', timeoutMs: 1000, now: new Date(),
+    })
+    expect(identity).toBeNull()
   })
 })

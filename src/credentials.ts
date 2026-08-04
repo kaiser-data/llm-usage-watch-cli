@@ -46,7 +46,8 @@ export function parseCredential(raw: string): Credential {
   const root = asRecord(parsed)
   if (root === null) throw new CredentialError(SETUP_TOKEN_HELP, 'insufficient-scope')
 
-  const source = asRecord(root.claudeAiOauth) ?? root
+  const wrapped = asRecord(root.claudeAiOauth)
+  const source = wrapped ?? root
 
   const accessToken = source.accessToken
   const refreshToken = source.refreshToken
@@ -72,16 +73,42 @@ export function parseCredential(raw: string): Credential {
     throw new CredentialError(SCOPE_HELP, 'insufficient-scope')
   }
 
-  return { accessToken, refreshToken, expiresAt, scopes: scopes as string[] }
+  return {
+    accessToken,
+    refreshToken,
+    expiresAt,
+    scopes: scopes as string[],
+    // Wrapped form: the branch itself. cuw's own form: the persisted copy.
+    raw: wrapped ?? asRecord(source.raw) ?? {},
+  }
 }
 
 export function serializeCredential(credential: Credential): string {
   return JSON.stringify(credential)
 }
 
+/** True for a credential stored before cuw kept the full login branch. */
+export function isLegacyCredential(credential: Credential): boolean {
+  return Object.keys(credential.raw).length === 0
+}
+
 /** True once the access token is expired, or close enough to it to be risky. */
 export function isExpired(credential: Credential, now: number): boolean {
   return credential.expiresAt - now <= REFRESH_SKEW_MS
+}
+
+/**
+ * Projects refreshed values back into the passthrough. A legacy credential has
+ * none and must not gain one: a half-populated branch would look restorable and
+ * would be written over a working login. `refreshTokenExpiresAt` is left as it
+ * was — the token endpoint does not report it.
+ */
+function refreshedRaw(
+  raw: Record<string, unknown>,
+  next: { accessToken: string; refreshToken: string; expiresAt: number },
+): Record<string, unknown> {
+  if (Object.keys(raw).length === 0) return {}
+  return { ...raw, ...next }
 }
 
 export type RefreshDeps = { fetcher: typeof fetch; now: number }
@@ -125,11 +152,15 @@ export async function refreshCredential(
   const rotated = typeof body?.refresh_token === 'string' ? body.refresh_token : null
   const scope = typeof body?.scope === 'string' ? body.scope.split(' ') : credential.scopes
 
+  // The endpoint may rotate the refresh token or reuse the existing one.
+  const refreshToken = rotated ?? credential.refreshToken
+  const expiresAt = deps.now + expiresIn * 1000
+
   return {
     accessToken,
-    // The endpoint may rotate the refresh token or reuse the existing one.
-    refreshToken: rotated ?? credential.refreshToken,
-    expiresAt: deps.now + expiresIn * 1000,
+    refreshToken,
+    expiresAt,
     scopes: scope,
+    raw: refreshedRaw(credential.raw, { accessToken, refreshToken, expiresAt }),
   }
 }

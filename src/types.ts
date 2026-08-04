@@ -3,6 +3,8 @@ export type Account = {
   label: string
   email: string
   order: number
+  /** The profile endpoint's `account.uuid`. Absent on pre-switching entries. */
+  uuid?: string
 }
 
 /** Usage figures for one account, independent of which path produced them. */
@@ -74,6 +76,13 @@ export type Credential = {
   /** Epoch milliseconds. */
   expiresAt: number
   scopes: string[]
+  /**
+   * The `claudeAiOauth` branch verbatim, so a switch can restore fields cuw
+   * does not model (`subscriptionType`, `rateLimitTier`, `refreshTokenExpiresAt`,
+   * and anything Anthropic adds later). Empty for credentials stored before this
+   * field existed — see `isLegacyCredential`.
+   */
+  raw: Record<string, unknown>
 }
 
 /** Plan and billing facts, from /api/oauth/profile. */

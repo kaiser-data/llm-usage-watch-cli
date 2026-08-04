@@ -12,6 +12,7 @@ const FRESH: Credential = {
   refreshToken: 'refresh-1',
   expiresAt: NOW + 3_600_000,
   scopes: ['user:inference', REQUIRED_SCOPE],
+  raw: {},
 }
 
 const STALE: Credential = { ...FRESH, accessToken: 'access-stale', expiresAt: NOW - 1 }

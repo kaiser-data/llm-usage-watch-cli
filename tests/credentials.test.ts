@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   CredentialError,
   isExpired,
+  isLegacyCredential,
   parseCredential,
   refreshCredential,
   serializeCredential,
@@ -16,6 +17,7 @@ const FULL: Credential = {
   refreshToken: 'refresh-1',
   expiresAt: NOW + 3_600_000,
   scopes: ['user:inference', REQUIRED_SCOPE],
+  raw: {},
 }
 
 /** The shape `claude auth login` writes to the Keychain. */
@@ -67,6 +69,28 @@ describe('parseCredential', () => {
     expect(() => parseCredential('sk-ant-oat01-example')).toThrow(/inference-only|not a login credential/i)
   })
 
+  test('captures the login branch verbatim, including unmodelled fields', () => {
+    const credential = parseCredential(loginBlob({ rateLimitTier: 'default_claude_ai' }))
+    expect(credential.raw.subscriptionType).toBe('max')
+    expect(credential.raw.rateLimitTier).toBe('default_claude_ai')
+  })
+
+  test("round-trips the passthrough through cuw's own stored form", () => {
+    const stored = serializeCredential(parseCredential(loginBlob()))
+    expect(parseCredential(stored).raw.subscriptionType).toBe('max')
+  })
+
+  test('reports a credential stored before the passthrough as legacy', () => {
+    const old = JSON.stringify({
+      accessToken: 'access-1',
+      refreshToken: 'refresh-1',
+      expiresAt: NOW + 3_600_000,
+      scopes: [REQUIRED_SCOPE],
+    })
+    expect(isLegacyCredential(parseCredential(old))).toBe(true)
+    expect(isLegacyCredential(parseCredential(loginBlob()))).toBe(false)
+  })
+
   test('error messages never contain the token', () => {
     let message = ''
     try {
@@ -112,6 +136,26 @@ describe('refreshCredential', () => {
     expect(refreshed.accessToken).toBe('access-2')
     expect(refreshed.refreshToken).toBe('refresh-2')
     expect(refreshed.expiresAt).toBe(NOW + 28_800_000)
+  })
+
+  test('projects refreshed values into the passthrough', async () => {
+    const fetcher = fetcherReturning({
+      access_token: 'access-2',
+      refresh_token: 'refresh-2',
+      expires_in: 3600,
+    })
+    const refreshed = await refreshCredential(parseCredential(loginBlob()), { fetcher, now: NOW })
+    expect(refreshed.raw.accessToken).toBe('access-2')
+    expect(refreshed.raw.refreshToken).toBe('refresh-2')
+    expect(refreshed.raw.expiresAt).toBe(NOW + 3_600_000)
+    // Untouched fields survive the refresh.
+    expect(refreshed.raw.subscriptionType).toBe('max')
+  })
+
+  test('does not give a legacy credential a passthrough', async () => {
+    const fetcher = fetcherReturning({ access_token: 'access-2', expires_in: 3600 })
+    const refreshed = await refreshCredential(FULL, { fetcher, now: NOW })
+    expect(isLegacyCredential(refreshed)).toBe(true)
   })
 
   test('keeps the old refresh token when the response omits one', async () => {
