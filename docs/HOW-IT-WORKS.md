@@ -4,8 +4,8 @@ A working reference for whoever picks this up next — including future me.
 
 ## The problem it solves
 
-Several Claude subscriptions, one machine. Two costs made them painful to use
-together:
+Several Claude subscriptions plus one active Codex account, one machine. Two
+costs made the Claude subscriptions painful to use together:
 
 1. **Seeing usage required switching logins.** `claude auth login` holds exactly
    one credential, so checking another subscription meant logging out, logging
@@ -17,6 +17,10 @@ together:
 `cuw` answers both: it reads every subscription at once without touching the
 active login, and `cuw prime` opens a window for a few tokens so the accounts
 are staggered and one is always ready.
+
+The same status command also reads the account-wide limits for the currently
+logged-in Codex account. That read is independent of any running Codex app,
+conversation, or agent session.
 
 ## Current state
 
@@ -32,6 +36,11 @@ nimzo        pro    93%  ▓▓▓▓▓▓▓▓░   3h56m    44%  ▓▓▓�
 main         pro    16%  ▓░░░░░░░░   4h46m    68%  ▓▓▓▓▓▓░░░   1d14h      ~2d  ● warm
 
 → use: main  (only 32% of the weekly limit left — that is what binds)
+
+CODEX  active  PLAN plus
+LIMIT  WINDOW         USED             RESETS
+──────────────────────────────────────────────
+codex  primary 7d      73%  ▓▓▓▓▓▓▓░░      4d
 ```
 
 ## Authentication — the part that took three attempts to get right
@@ -81,6 +90,8 @@ Refresh tokens last months, so in practice you log in once per subscription.
 
 ## Where the numbers come from
 
+### Claude subscriptions
+
 Two endpoints, both hit concurrently per account, and all accounts concurrently
 with each other:
 
@@ -108,6 +119,23 @@ provide. That is why a 403 stays a hard, explained error rather than silently
 falling back.
 
 Rows served by the probe are marked `(probe)` so the source is never ambiguous.
+
+### Codex: short-lived app-server read
+
+For the active Codex login, `cuw` starts `codex app-server`, completes its JSONL
+initialization handshake, calls `account/rateLimits/read`, normalizes every
+returned bucket and primary/secondary window, and terminates the child. This is
+account-wide data; it does not depend on a running Codex conversation, desktop
+app, or CLI session.
+
+The app-server owns authentication and refresh. `cuw` does not read Codex auth
+files, copy tokens, inspect conversation logs, or call a private HTTP endpoint.
+Only normalized plan, bucket, percentage, duration, and reset values cross the
+process boundary. Raw protocol errors and stderr are discarded.
+
+Claude and Codex collection start concurrently. A Codex failure becomes a safe
+message in the Codex section and cannot suppress the Claude table,
+recommendation, or exit code.
 
 ## Choosing an account
 
@@ -191,6 +219,8 @@ cli.ts                 argument parsing, dependency wiring, the only place
   ├─ profile.ts        /api/oauth/profile client (plan, renewal estimate)
   ├─ usage-probe.ts    fallback: minimal request, rate-limit header parse
   ├─ usage.ts          per-account orchestration and fallback policy
+  ├─ codex-usage.ts    validate/normalize arbitrary Codex limit buckets
+  ├─ codex-app-server.ts short-lived JSONL client + process lifecycle
   ├─ classify.ts       state + recommendation            (pure)
   ├─ render.ts         table, bars, countdowns, colour   (pure)
   ├─ prime.ts          isolated `claude -p` invocation
@@ -199,7 +229,7 @@ cli.ts                 argument parsing, dependency wiring, the only place
 
 `classify.ts` and `render.ts` do no I/O and read no environment — TTY-ness,
 terminal width and the current time are passed in. That is what makes them
-exhaustively testable, and it is where most of the 164 tests live.
+exhaustively testable.
 
 ## Invariants — do not break these
 
@@ -208,8 +238,14 @@ exhaustively testable, and it is where most of the 164 tests live.
   render, JSON, or log path. Error messages discard response bodies and stderr
   tails that could echo credentials; `prime.ts` has a `redact()` helper.
 - **Never auto-probe for routine reads.** See above.
-- **One failing account must never fail the command.** Each row carries its own
-  error; `Promise.all` over independent per-account work.
+- **Never read Codex credentials or session files directly.** Authentication
+  stays inside `codex app-server`; raw stdout messages and stderr never reach
+  terminal or JSON output.
+- **One failing account or provider must never fail the command.** Each Claude
+  row carries its own error, and Codex has a provider-level safe error. Claude
+  and Codex run independently under `Promise.all`.
+- **Codex never affects Claude recommendation or exit status.** Exit `2`
+  continues to mean a missing or rejected Claude credential.
 - **Never report a primed window without confirming it.**
 - **The test fixture is synthetic** (`tests/fixtures/usage-api.json`: year-2099
   timestamps, USD, zeroed amounts) because the repo is public. Do not replace it
@@ -221,6 +257,12 @@ exhaustively testable, and it is where most of the 164 tests live.
 
 ## Known limits
 
+- **Only the active Codex account is shown.** This version does not register,
+  switch, or aggregate multiple Codex accounts. The Codex CLI must be installed
+  and logged in, but no Codex session needs to be running.
+- **The JSON top level changed intentionally.** `cuw status --json` returns
+  `{ "claude": [...], "codex": {...} }`; consumers of the former top-level
+  Claude array must select the `claude` property.
 - **No subscription end date exists.** The API exposes no `current_period_end`
   or `subscription_ends_at`. The `RENEWS` column is *derived* — the next monthly
   anniversary of `subscription_created_at` — and is prefixed `~` to say so. An
@@ -234,7 +276,8 @@ exhaustively testable, and it is where most of the 164 tests live.
   `POST /v1/oauth/token` returns `rate_limit_error`, and a throttled response is
   indistinguishable from a dead refresh token. If a row suddenly says "re-add",
   wait before concluding the credential is broken.
-- macOS only: depends on `security(1)` and the `claude` CLI.
+- macOS only: Claude management depends on `security(1)` and the `claude` CLI;
+  Codex reporting depends on the `codex` CLI.
 
 ## The one change worth making next
 

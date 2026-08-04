@@ -1,11 +1,12 @@
 # llm-usage-watch-cli (`cuw`)
 
-See five-hour and weekly usage across several Claude subscriptions without
-logging in and out, and start the five-hour window on an idle one.
+See usage across several Claude subscriptions and the active Codex account in
+one command. For Claude, `cuw` can also start the five-hour window on an idle
+subscription.
 
-> For subscriptions **you own**. This tool reports usage and opens a rate-limit
-> window on your own accounts; it does not pool, share, or route work between
-> them. See [Scope](#scope).
+> For subscriptions **you own**. This tool reports usage and can open a Claude
+> rate-limit window on your own accounts; it does not pool, share, or route work
+> between them. See [Scope](#scope).
 
 The five-hour window only begins at an account's *first* message, so an untouched
 subscription is not ready to go — switching to it means waiting. `cuw prime`
@@ -18,49 +19,73 @@ the one you're on runs dry.
     bun run build
     ln -sf "$PWD/dist/cuw" /usr/local/bin/cuw
 
-## Set up each subscription
+## Set up each Claude subscription
 
-Log into a subscription in another terminal, mint a long-lived token, and hand it
-to `cuw`:
+Log into a subscription in another terminal, then let `cuw` copy that login
+credential into its own Keychain entry:
 
-    claude setup-token      # in a terminal logged into that account
-    cuw add work            # paste the token when prompted
+    claude auth login       # in a terminal logged into that account
+    cuw add work            # captures the current login
 
-Repeat per subscription. Tokens live in the macOS Keychain under the service
-`cuw-token` and are read from stdin, never from argv, so they stay out of your
-shell history. `~/.config/cuw/accounts.json` holds no secrets.
+Repeat per subscription. Credentials live in the macOS Keychain under the
+service `cuw-token`. `~/.config/cuw/accounts.json` holds no secrets.
+
+## Codex usage
+
+Install the Codex CLI and log in once:
+
+    codex login
+
+`cuw` reads the account-wide limits of that active Codex account. No Codex app,
+CLI conversation, or agent session needs to be running. `cuw` starts a
+short-lived local app-server for the read and never accesses Codex tokens,
+emails, conversations, or session files directly.
 
 ## Use
 
-    cuw                     # the table
-    cuw status --json       # machine-readable
+    cuw                     # Claude table plus active Codex usage
+    cuw status --json       # { "claude": [...], "codex": {...} }
     cuw prime work          # start the five-hour window on one account
     cuw prime --cold        # start it on every idle account
     cuw doctor              # diagnose tokens and data paths
     cuw rm work             # forget an account and delete its token
 
 ```
-ACCOUNT      5H WINDOW      RESETS   WEEKLY   STATE
-────────────────────────────────────────────────────
-main          12%  ▓░░░░░░░░   3h41m     34%   ● warm
-secondary      0%  ░░░░░░░░░      —      18%   ○ cold
-third         88%  ▓▓▓▓▓▓▓▓░     47m     71%   ▲ hot
+ACCOUNT    PLAN  5H WINDOW        RESETS  WEEKLY         RESETS   RENEWS  STATE
+──────────────────────────────────────────────────────────────────────────────
+main       pro    12%  ▓░░░░░░░░   3h41m    34%  ▓▓▓░░░░░░      2d      ~9d  ● warm
+secondary pro     0%  ░░░░░░░░░       —    18%  ▓▓░░░░░░░      4d     ~18d  ○ cold
 
 → use: secondary  (cold — run `cuw prime secondary` to start its clock)
+
+CODEX  active  PLAN plus
+LIMIT  WINDOW         USED             RESETS
+──────────────────────────────────────────────
+codex  primary 7d      73%  ▓▓▓▓▓▓▓░░      4d
 ```
 
-Exit codes: `0` success, `1` bad arguments, `2` an account needs attention.
+`--json` intentionally uses the combined object shape shown above rather than
+the former top-level Claude array.
+
+Exit codes: `0` success, `1` bad arguments, `2` a Claude account needs
+attention. Codex errors are shown in their own section but do not hide Claude
+results or change the exit code.
 
 ## How it reads usage
 
-Primary path is `GET /api/oauth/usage` — the same endpoint the Claude Code CLI
-itself calls for `/usage`. It is exact, free, and returns in well under a second
-for all accounts in parallel.
+For Claude, the primary path is `GET /api/oauth/usage` — the same endpoint the
+Claude Code CLI itself calls for `/usage`. It is exact, free, and returns in
+well under a second for all accounts in parallel.
 
 If that endpoint changes shape, each affected account falls back to sending one
 minimal request and reading the `anthropic-ratelimit-*` response headers. Rows
 served that way are marked `(probe)`, because a probe also opens a window.
 `cuw doctor` tells you which path each account is using.
+
+For Codex, `cuw` starts `codex app-server`, performs its JSONL initialization
+handshake, reads `account/rateLimits/read`, and terminates the child. Claude and
+Codex are collected concurrently. The Codex path makes no inference request and
+does not depend on an existing Codex session.
 
 ## Priming cost
 
@@ -74,11 +99,12 @@ actually opened.
 
 ## Scope
 
-`cuw` reports and primes. It does not pool accounts, share credentials, or route
-work between subscriptions — you decide where to work. It is for subscriptions
-you own.
+`cuw` reports Claude and Codex usage and primes Claude subscriptions. It does not
+pool accounts, share credentials, or route work between subscriptions — you
+decide where to work. It is for subscriptions you own.
 
-macOS only: it depends on `security(1)` and the `claude` CLI.
+macOS only: Claude account management depends on `security(1)` and the `claude`
+CLI; Codex reporting depends on the `codex` CLI and its active login.
 
 ## How it works
 
@@ -88,8 +114,9 @@ from, how an account is chosen, and the invariants not to break.
 
 ## Development
 
-    bun test              # 117 tests
-    bun test --coverage   # ~98% lines
+    bun test
+    bun test --coverage
+    bunx tsc --noEmit
     bun run build
 
 Design and plan documents are under `docs/superpowers/`.
