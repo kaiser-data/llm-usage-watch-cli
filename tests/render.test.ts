@@ -1,12 +1,36 @@
 import { describe, expect, test } from 'bun:test'
-import { bar, formatDuration, renderTable } from '../src/render'
+import { bar, formatDuration, renderCodexUsage, renderTable } from '../src/render'
 import { recommend } from '../src/classify'
 import { BAR_CELLS } from '../src/constants'
-import type { AccountUsage } from '../src/types'
+import type { AccountUsage, CodexUsage } from '../src/types'
 
 const NOW = new Date('2026-08-03T08:00:00Z')
 const OPTS = { color: false, width: 80, now: NOW }
 const ANSI_PATTERN = /\[/
+
+const CODEX: CodexUsage = {
+  provider: 'codex',
+  plan: 'plus',
+  limits: [{
+    id: 'codex',
+    name: null,
+    windows: [
+      {
+        role: 'primary',
+        usedPct: 73,
+        durationMinutes: 10080,
+        resetsAt: new Date('2026-08-07T08:00:00Z'),
+      },
+      {
+        role: 'secondary',
+        usedPct: 20,
+        durationMinutes: 300,
+        resetsAt: new Date('2026-08-03T10:00:00Z'),
+      },
+    ],
+  }],
+  error: null,
+}
 
 function row(partial: Partial<AccountUsage> & { id: string }): AccountUsage {
   return {
@@ -153,5 +177,56 @@ describe('renderTable', () => {
     ]
     const output = renderTable(spent, recommend(spent), OPTS)
     expect(output).toContain('1h00m')
+  })
+})
+
+describe('renderCodexUsage', () => {
+  test('renders active plan and every returned window', () => {
+    const output = renderCodexUsage(CODEX, OPTS)
+
+    expect(output).toContain('CODEX')
+    expect(output).toContain('active')
+    expect(output).toContain('plus')
+    expect(output).toContain('primary 7d')
+    expect(output).toContain('secondary 5h00m')
+    expect(output).toContain('73%')
+    expect(output).toContain('4d')
+    expect(output).not.toMatch(ANSI_PATTERN)
+  })
+
+  test('uses a server-provided bucket name', () => {
+    const named: CodexUsage = {
+      ...CODEX,
+      limits: [{ ...CODEX.limits[0]!, name: 'Other models' }],
+    }
+
+    expect(renderCodexUsage(named, OPTS)).toContain('Other models')
+  })
+
+  test('renders a safe error without a table', () => {
+    const failed: CodexUsage = {
+      provider: 'codex',
+      plan: null,
+      limits: [],
+      error: {
+        cause: 'not-logged-in',
+        message: 'Codex is not logged in — run `codex login`',
+      },
+    }
+
+    const output = renderCodexUsage(failed, OPTS)
+    expect(output).toContain('codex login')
+    expect(output).toContain('✗ error')
+    expect(output).not.toContain('LIMIT  WINDOW')
+  })
+
+  test('renders an explicit message when no windows are reported', () => {
+    expect(renderCodexUsage({ ...CODEX, limits: [] }, OPTS))
+      .toContain('No limit windows')
+  })
+
+  test('emits ANSI escapes only when color is enabled', () => {
+    expect(renderCodexUsage(CODEX, OPTS)).not.toMatch(ANSI_PATTERN)
+    expect(renderCodexUsage(CODEX, { ...OPTS, color: true })).toMatch(ANSI_PATTERN)
   })
 })

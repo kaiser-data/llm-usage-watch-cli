@@ -1,16 +1,38 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 let server: ReturnType<typeof Bun.serve>
 let home: string
+let fakeBin: string
 let mode: 'ok' | 'unauthorized' | 'garbage' = 'ok'
 
 const FIXTURE = {
   five_hour: { utilization: 12.0, resets_at: '2099-01-01T00:00:00Z' },
   seven_day: { utilization: 34.0, resets_at: '2099-01-05T00:00:00Z' },
 }
+
+const FAKE_CODEX = `#!/usr/bin/env bun
+import readline from 'node:readline'
+const input = readline.createInterface({ input: process.stdin })
+input.on('line', line => {
+  const message = JSON.parse(line)
+  if (message.method === 'initialize') {
+    console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake-codex' } }))
+  }
+  if (message.method === 'account/rateLimits/read') {
+    console.log(JSON.stringify({ id: message.id, result: {
+      rateLimits: {
+        limitId: 'codex',
+        planType: 'plus',
+        primary: { usedPercent: 73, windowDurationMins: 10080, resetsAt: 4070995200 },
+        secondary: null,
+      },
+    } }))
+  }
+})
+`
 
 beforeAll(async () => {
   server = Bun.serve({
@@ -26,6 +48,11 @@ beforeAll(async () => {
   })
 
   home = await mkdtemp(join(tmpdir(), 'cuw-home-'))
+  fakeBin = join(home, 'bin')
+  await mkdir(fakeBin, { recursive: true })
+  const fakeCodexPath = join(fakeBin, 'codex')
+  await writeFile(fakeCodexPath, FAKE_CODEX)
+  await chmod(fakeCodexPath, 0o755)
   await mkdir(join(home, '.config', 'cuw'), { recursive: true })
   await writeFile(
     join(home, '.config', 'cuw', 'accounts.json'),
@@ -42,6 +69,7 @@ async function runCli(args: string[]): Promise<{ code: number; stdout: string }>
       HOME: home,
       CUW_ENDPOINT: `http://localhost:${server.port}/usage`,
       CUW_FAKE_TOKEN: 'test-token',
+      PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
     },
     stdout: 'pipe',
     stderr: 'pipe',
@@ -51,18 +79,22 @@ async function runCli(args: string[]): Promise<{ code: number; stdout: string }>
 }
 
 describe('cuw end to end', () => {
-  test('renders a table against a healthy endpoint', async () => {
+  test('renders Claude and active Codex usage', async () => {
     mode = 'ok'
     const { code, stdout } = await runCli([])
     expect(code).toBe(0)
     expect(stdout).toContain('main')
     expect(stdout).toContain('12%')
+    expect(stdout).toContain('CODEX')
+    expect(stdout).toContain('73%')
   })
 
-  test('emits JSON with --json', async () => {
+  test('emits combined JSON with --json', async () => {
     mode = 'ok'
     const { stdout } = await runCli(['status', '--json'])
-    expect(JSON.parse(stdout)[0].fiveHourPct).toBe(12)
+    const parsed = JSON.parse(stdout)
+    expect(parsed.claude[0].fiveHourPct).toBe(12)
+    expect(parsed.codex.limits[0].windows[0].usedPct).toBe(73)
   })
 
   test('exits 2 on an unauthorized token', async () => {

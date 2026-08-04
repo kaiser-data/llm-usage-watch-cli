@@ -1,6 +1,6 @@
 import { BAR_CELLS } from './constants'
 import { classify, type Recommendation, type State } from './classify'
-import type { AccountUsage } from './types'
+import type { AccountUsage, CodexUsage } from './types'
 
 const MS_PER_MINUTE = 60_000
 const MS_PER_HOUR = 3_600_000
@@ -63,6 +63,10 @@ function pctText(pct: number | null): string {
 function countdown(resetsAt: Date | null, now: Date): string {
   if (resetsAt === null) return '—'
   return formatDuration(resetsAt.getTime() - now.getTime())
+}
+
+function codexDuration(minutes: number | null): string {
+  return minutes === null ? '—' : formatDuration(minutes * MS_PER_MINUTE)
 }
 
 function planText(row: AccountUsage): string {
@@ -150,4 +154,45 @@ export function renderTable(
     : `\n→ use: ${rec.useId}  (${rec.reason})`
 
   return [header, rule, ...body, footer, ''].join('\n')
+}
+
+/** Renders Codex separately because its limit buckets have arbitrary durations. */
+export function renderCodexUsage(usage: CodexUsage, opts: RenderOptions): string {
+  const heading = `CODEX  active  PLAN ${usage.plan ?? '—'}`
+  if (usage.error !== null) {
+    const mark = paint('✗ error', ANSI.red, opts.color)
+    return `${heading}\n${mark}  ${usage.error.message}\n`
+  }
+
+  const rows = usage.limits.flatMap(limit =>
+    limit.windows.map(window => ({ limit, window })))
+  if (rows.length === 0) return `${heading}\nNo limit windows reported.\n`
+
+  const labelWidth = Math.max(
+    5,
+    ...rows.map(row => (row.limit.name ?? row.limit.id).length),
+  )
+  const header = paint(
+    [
+      'LIMIT'.padEnd(labelWidth),
+      'WINDOW'.padEnd(13),
+      `USED${' '.repeat(BAR_CELLS + 2)}`,
+      'RESETS',
+    ].join('  '),
+    ANSI.dim,
+    opts.color,
+  )
+  const rule = paint(
+    '─'.repeat(Math.min(opts.width, labelWidth + BAR_CELLS + 39)),
+    ANSI.dim,
+    opts.color,
+  )
+  const body = rows.map(({ limit, window }) => [
+    (limit.name ?? limit.id).padEnd(labelWidth),
+    `${window.role} ${codexDuration(window.durationMinutes)}`.padEnd(13),
+    `${String(window.usedPct).padStart(3)}%  ${bar(window.usedPct)}`,
+    countdown(window.resetsAt, opts.now).padStart(6),
+  ].join('  '))
+
+  return [heading, header, rule, ...body, ''].join('\n')
 }

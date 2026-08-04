@@ -10,6 +10,9 @@ export const SPENT_THRESHOLD_PCT = 100
 /** Per-account timeout for a usage request. */
 export const REQUEST_TIMEOUT_MS = 8_000
 
+/** Timeout for the complete short-lived Codex app-server usage read. */
+export const CODEX_USAGE_TIMEOUT_MS = 8_000
+
 /** Timeout for one priming session. */
 export const PRIME_TIMEOUT_MS = 60_000
 

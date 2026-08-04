@@ -1,6 +1,7 @@
 import { classify, recommend } from '../classify'
-import { renderTable } from '../render'
-import type { Account } from '../types'
+import { failedCodexUsage } from '../codex-usage'
+import { renderCodexUsage, renderTable } from '../render'
+import type { Account, CodexUsage } from '../types'
 import { collectUsage, type UsageDeps } from '../usage'
 
 export type Io = { out: (text: string) => void; err: (text: string) => void }
@@ -8,6 +9,7 @@ export type Io = { out: (text: string) => void; err: (text: string) => void }
 export type StatusDeps = {
   accounts: Account[]
   usage: UsageDeps
+  collectCodex: () => Promise<CodexUsage>
   color: boolean
   width: number
   now: Date
@@ -22,13 +24,23 @@ export async function runStatus(
   deps: StatusDeps,
   io: Io,
 ): Promise<number> {
-  const rows = await collectUsage(deps.accounts, deps.usage)
+  const [rows, codex] = await Promise.all([
+    collectUsage(deps.accounts, deps.usage),
+    deps.collectCodex().catch(() =>
+      failedCodexUsage('process', 'Codex usage could not be read')),
+  ])
   const rec = recommend(rows)
+  const options = { color: deps.color, width: deps.width, now: deps.now }
 
   if (args.json) {
-    io.out(JSON.stringify(rows.map(row => ({ ...row, state: classify(row) })), null, 2))
+    io.out(JSON.stringify({
+      claude: rows.map(row => ({ ...row, state: classify(row) })),
+      codex,
+    }, null, 2))
   } else {
-    io.out(renderTable(rows, rec, { color: deps.color, width: deps.width, now: deps.now }))
+    const claude = renderTable(rows, rec, options).trimEnd()
+    const codexText = renderCodexUsage(codex, options).trimEnd()
+    io.out(`${claude}\n\n${codexText}\n`)
   }
 
   const hasAuthProblem = rows.some(
