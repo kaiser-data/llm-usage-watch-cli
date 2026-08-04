@@ -206,6 +206,52 @@ opening the printed authorize URL in a private window first.
 makes no inference request. Registering a spent subscription is in fact the
 point: the table then tells you when it comes back.
 
+## Switching the login
+
+`cuw use` repoints the machine's Claude Code login. The whole design is dictated
+by one fact about the `Claude Code-credentials` Keychain item: **it is not only
+the login.**
+
+```
+mcpOAuth.<server>.accessToken     every connected MCP server's OAuth token
+mcpOAuth.<server>.discoveryState.*
+claudeAiOauth.accessToken
+claudeAiOauth.refreshToken
+claudeAiOauth.expiresAt
+claudeAiOauth.refreshTokenExpiresAt
+claudeAiOauth.scopes
+claudeAiOauth.subscriptionType
+claudeAiOauth.rateLimitTier
+```
+
+Two consequences, both load-bearing:
+
+**The write merges.** `mergeLogin` in `login.ts` is pure: it returns the live
+blob with only `claudeAiOauth` replaced. Writing `{claudeAiOauth: …}` over the
+item would destroy every MCP server authorization stored beside it — silently,
+with no way back. That single function carries the feature's most important
+test.
+
+**The stored credential is verbatim.** `Credential.raw` holds the whole
+`claudeAiOauth` branch as read. cuw models four of its fields; reconstructing the
+branch from those four would drop `subscriptionType`, `rateLimitTier`,
+`refreshTokenExpiresAt`, and anything Anthropic adds later. `refreshCredential`
+projects new tokens back into `raw` so the passthrough cannot go stale — and
+deliberately refuses to give a legacy credential a passthrough it never had.
+
+**Identification before destruction.** The switch resolves who is currently
+logged in by fetching `/api/oauth/profile` for the live credential and matching
+`account.uuid` against the registry. If the profile cannot be read, the switch
+**aborts**: capturing the outgoing login is the safety net for a destructive
+write, and the net depends on identifying it. If the login is unknown, it is
+captured as a new account first. Capture is suppressed while any account still
+lacks a `uuid`, because a half-migrated registry cannot tell "untracked" from
+"tracked but never identified", and guessing wrong duplicates an account.
+
+Accounts added before `Credential.raw` existed are refused with a re-add
+instruction. No automatic migration is possible: cuw never sees a full login blob
+again after `add`.
+
 ## Module map
 
 ```
@@ -223,8 +269,9 @@ cli.ts                 argument parsing, dependency wiring, the only place
   ├─ codex-app-server.ts short-lived JSONL client + process lifecycle
   ├─ classify.ts       state + recommendation            (pure)
   ├─ render.ts         table, bars, countdowns, colour   (pure)
+  ├─ login.ts          the live login item: read, pure merge, write
   ├─ prime.ts          isolated `claude -p` invocation
-  └─ commands/         status, add, rm, prime, doctor
+  └─ commands/         status, use, add, rm, prime, doctor
 ```
 
 `classify.ts` and `render.ts` do no I/O and read no environment — TTY-ness,
@@ -233,7 +280,10 @@ exhaustively testable.
 
 ## Invariants — do not break these
 
-- **Tokens may appear only** in `keychain.ts`, `credentials.ts`,
+- **Never replace the login item, only merge into it.** `mergeLogin` is the sole
+  writer of `claudeAiOauth`, and it preserves every other top-level key. The MCP
+  server tokens live in that same item.
+- **Tokens may appear only** in `keychain.ts`, `credentials.ts`, `login.ts`,
   `token-source.ts`, `usage-probe.ts`, `prime.ts` and `cli.ts`. Never in a
   render, JSON, or log path. Error messages discard response bodies and stderr
   tails that could echo credentials; `prime.ts` has a `redact()` helper.

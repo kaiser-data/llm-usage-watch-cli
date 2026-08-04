@@ -19,7 +19,9 @@ import { fetchUsage } from './usage-api'
 import { fetchIdentity, fetchSubscription } from './profile'
 import { probeUsage } from './usage-probe'
 import { EXIT_OK, EXIT_USAGE, runStatus, type Io } from './commands/status'
+import { createLoginStore } from './login'
 import { runAdd } from './commands/add'
+import { runUse } from './commands/use'
 import { runRm } from './commands/rm'
 import { runPrime } from './commands/prime'
 import { runDoctor } from './commands/doctor'
@@ -29,6 +31,7 @@ const HELP = `cuw — Claude and active Codex account usage
 
 Usage:
   cuw [status] [--json]     Show configured Claude and active Codex usage
+  cuw use [<id>]            Switch the Claude Code login to a subscription
   cuw add <id>              Store a long-lived token for a subscription
   cuw rm <id>               Remove a subscription
   cuw prime <id>            Start the five-hour window on a subscription
@@ -140,6 +143,25 @@ export async function main(argv: string[]): Promise<number> {
         io,
       )
     }
+    case 'use': {
+      const target = rest.find(argument => !argument.startsWith('--'))
+      return runUse(target, {
+        registryFile: registryPath(home()),
+        accounts,
+        usage: await buildUsageDeps(),
+        // Deliberately the raw store: `use` needs the credential blob, and the
+        // refreshing wrapper returns a bare access token.
+        keychain: createKeychain(realRunner),
+        login: createLoginStore(realRunner),
+        fetchIdentity: token => fetchIdentity(token, {
+          fetcher: fetch,
+          endpoint: PROFILE_ENDPOINT,
+          timeoutMs: REQUEST_TIMEOUT_MS,
+          now: new Date(),
+        }),
+      }, io)
+    }
+
     case 'add': {
       const id = rest[0]
       if (!id) {
