@@ -27,6 +27,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .cache
 *.tsbuildinfo
 
+# local feature worktrees
+.worktrees/
+
 # IntelliJ based IDEs
 .idea
 
