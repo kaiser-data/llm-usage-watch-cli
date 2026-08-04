@@ -38,8 +38,9 @@ function firstNumber(source: Record<string, unknown>, paths: readonly string[]):
   for (const path of paths) {
     const value = pick(source, path)
     if (typeof value === 'number' && Number.isFinite(value)) {
-      // Observed as 0-100; a 0-1 payload is also accepted defensively.
-      return value <= 1 ? Math.round(value * 100) : Math.round(value)
+      // Always 0-100. Rescaling small values as a 0-1 fraction would read a
+      // window sitting at 1% as a window that is completely spent.
+      return Math.round(value)
     }
   }
   return null

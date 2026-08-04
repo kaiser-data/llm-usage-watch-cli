@@ -33,6 +33,16 @@ describe('normalizeApiResponse', () => {
     expect(windows.fiveHourPct).toBe(23)
   })
 
+  test('reads a utilization of exactly 1 as one percent, not a full window', () => {
+    const windows = normalizeApiResponse({ five_hour: { utilization: 1 }, seven_day: null })
+    expect(windows.fiveHourPct).toBe(1)
+  })
+
+  test('rounds a sub-one utilization down to zero percent', () => {
+    const windows = normalizeApiResponse({ five_hour: { utilization: 0.4 }, seven_day: null })
+    expect(windows.fiveHourPct).toBe(0)
+  })
+
   test('tolerates a null per-model limit object', () => {
     const windows = normalizeApiResponse({ five_hour: { utilization: 5 }, seven_day_opus: null })
     expect(windows.opusWeeklyPct).toBeNull()
