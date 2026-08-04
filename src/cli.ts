@@ -4,12 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   CLAUDE_CREDENTIAL_SERVICE,
+  CODEX_USAGE_TIMEOUT_MS,
   DEFAULT_TERM_WIDTH,
   REQUEST_TIMEOUT_MS,
   PROFILE_ENDPOINT,
   USAGE_ENDPOINTS,
 } from './constants'
 import { createKeychain, realRunner } from './keychain'
+import { collectCodexUsage, realCodexAppServerSpawner } from './codex-app-server'
 import { createRefreshingTokenSource } from './token-source'
 import { loadRegistry, registryPath } from './registry'
 import { realSpawner } from './spawn'
@@ -23,10 +25,10 @@ import { runPrime } from './commands/prime'
 import { runDoctor } from './commands/doctor'
 import type { UsageDeps } from './usage'
 
-const HELP = `cuw — Claude subscription usage across accounts
+const HELP = `cuw — Claude and active Codex account usage
 
 Usage:
-  cuw [status] [--json]     Show usage for every configured subscription
+  cuw [status] [--json]     Show configured Claude and active Codex usage
   cuw add <id>              Store a long-lived token for a subscription
   cuw rm <id>               Remove a subscription
   cuw prime <id>            Start the five-hour window on a subscription
@@ -127,6 +129,10 @@ export async function main(argv: string[]): Promise<number> {
         {
           accounts,
           usage: await buildUsageDeps(),
+          collectCodex: () => collectCodexUsage({
+            spawn: realCodexAppServerSpawner,
+            timeoutMs: CODEX_USAGE_TIMEOUT_MS,
+          }),
           color: process.stdout.isTTY === true,
           width: process.stdout.columns ?? DEFAULT_TERM_WIDTH,
           now: new Date(),
