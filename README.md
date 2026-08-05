@@ -133,6 +133,10 @@ CLI; Codex reporting depends on the `codex` CLI and its active login.
 `setup-token` does not work and login credentials do), where the numbers come
 from, how an account is chosen, and the invariants not to break.
 
+[`docs/CODEX-USAGE.md`](docs/CODEX-USAGE.md) documents the Codex account
+requirement, output formats, app-server read, security boundaries, and
+troubleshooting.
+
 ## Development
 
     bun test

@@ -122,6 +122,9 @@ Rows served by the probe are marked `(probe)` so the source is never ambiguous.
 
 ### Codex: short-lived app-server read
 
+For the user-facing setup and output reference, see
+[`CODEX-USAGE.md`](CODEX-USAGE.md).
+
 For the active Codex login, `cuw` starts `codex app-server`, completes its JSONL
 initialization handshake, calls `account/rateLimits/read`, normalizes every
 returned bucket and primary/secondary window, and terminates the child. This is
