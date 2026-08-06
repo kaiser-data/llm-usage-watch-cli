@@ -116,6 +116,45 @@ describe('renderTable', () => {
     expect(renderTable(rows, recommend(rows), OPTS)).toContain('—')
   })
 
+  describe('column alignment', () => {
+    const aligned = [
+      row({
+        id: 'main',
+        fiveHourPct: 12,
+        fiveHourResetsAt: new Date('2026-08-03T11:41:00Z'),
+        weeklyPct: 34,
+        weeklyResetsAt: new Date('2026-08-05T06:00:00Z'),
+      }),
+    ]
+
+    /** The rendered table split into its header line and its single data line. */
+    function lines(): { header: string; data: string } {
+      const output = renderTable(aligned, recommend(aligned), OPTS).split('\n')
+      return { header: output[0] as string, data: output[2] as string }
+    }
+
+    test('ends the weekly reset value in the second RESETS column', () => {
+      const { header, data } = lines()
+      const headerEnd = header.indexOf('RESETS', header.indexOf('RESETS') + 1) + 'RESETS'.length
+      const valueEnd = data.indexOf('1d22h') + '1d22h'.length
+      expect(valueEnd).toBe(headerEnd)
+    })
+
+    test('ends the renewal value in the RENEWS column', () => {
+      const { header, data } = lines()
+      const headerEnd = header.indexOf('RENEWS') + 'RENEWS'.length
+      // Both resets are set on this fixture, so the only dash is the renewal,
+      // which has no subscription to derive a date from.
+      expect(data.lastIndexOf('—') + 1).toBe(headerEnd)
+    })
+
+    test('keeps the weekly bar clear of the next header', () => {
+      const { header, data } = lines()
+      const barEnd = data.lastIndexOf('░') + 1
+      expect(barEnd).toBeLessThan(header.indexOf('RESETS', header.indexOf('RESETS') + 1))
+    })
+  })
+
   test('emits no ANSI escapes when color is disabled', () => {
     expect(renderTable(rows, recommend(rows), OPTS)).not.toMatch(ANSI_PATTERN)
   })
