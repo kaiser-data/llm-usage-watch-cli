@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { primeAccount, type PrimeDeps } from '../src/prime'
 import { runPrime, type PrimeCommandDeps } from '../src/commands/prime'
-import { PRIME_MODEL, PRIME_PROMPT } from '../src/constants'
+import { PRIME_CONFIRM_ATTEMPTS, PRIME_MODEL, PRIME_PROMPT } from '../src/constants'
 import type { SpawnResult, Spawner } from '../src/spawn'
 import type { Account, UsageWindows } from '../src/types'
 
@@ -23,6 +23,18 @@ const COLD: UsageWindows = {
   opusWeeklyPct: null,
 }
 
+/**
+ * What the live API sends for an account whose window has not started: a zero
+ * utilization, not a null one. The absent reset time is the only signal.
+ */
+const DORMANT: UsageWindows = {
+  fiveHourPct: 0,
+  fiveHourResetsAt: null,
+  weeklyPct: 5,
+  weeklyResetsAt: null,
+  opusWeeklyPct: null,
+}
+
 function deps(
   spawnResult: SpawnResult = { code: 0, stderrTail: '' },
   after: UsageWindows = ACTIVE,
@@ -38,6 +50,7 @@ function deps(
     scratchDir: '/tmp/cuw-empty',
     configDir: '/tmp/cuw-profile',
     readWindows: async () => after,
+    sleep: async () => {},
   }
 }
 
@@ -80,6 +93,32 @@ describe('primeAccount', () => {
     expect(result.detail).toMatch(/no window/i)
   })
 
+  test('does not claim success when the window reads zero with no reset', async () => {
+    const result = await primeAccount(account, 'tok', deps({ code: 0, stderrTail: '' }, DORMANT))
+    expect(result.ok).toBe(false)
+    expect(result.detail).toMatch(/no window/i)
+  })
+
+  test('waits out the endpoint lag before judging the window', async () => {
+    const d = deps()
+    let reads = 0
+    // The window is open from the first call; the endpoint only says so on the third read.
+    d.readWindows = async () => (++reads < 3 ? DORMANT : ACTIVE)
+    const result = await primeAccount(account, 'tok', d)
+    expect(result.ok).toBe(true)
+    expect(result.resetsAt).toEqual(ACTIVE.fiveHourResetsAt)
+    expect(reads).toBe(3)
+  })
+
+  test('stops re-reading once the confirmation attempts run out', async () => {
+    const d = deps({ code: 0, stderrTail: '' }, DORMANT)
+    let reads = 0
+    d.readWindows = async () => { reads++; return DORMANT }
+    const result = await primeAccount(account, 'tok', d)
+    expect(result.ok).toBe(false)
+    expect(reads).toBe(PRIME_CONFIRM_ATTEMPTS)
+  })
+
   test('failure detail never contains the token', async () => {
     const result = await primeAccount(account, 'sk-secret', deps({ code: 1, stderrTail: 'token sk-secret bad' }))
     expect(result.detail).not.toContain('sk-secret')
@@ -119,6 +158,7 @@ describe('runPrime', () => {
         scratchDir: '/tmp/cuw-empty',
         configDir: '/tmp/cuw-profile',
         readWindows: async () => ACTIVE,
+        sleep: async () => {},
       },
     }
   }
@@ -151,6 +191,14 @@ describe('runPrime', () => {
     const { io } = captureIo()
     const d = commandDeps()
     d.usage.fetchWindows = async () => COLD
+    expect(await runPrime({ ids: [], cold: true }, d, io)).toBe(0)
+    expect(d.primed).toHaveLength(2)
+  })
+
+  test('--cold primes accounts the API reports as zero with no reset', async () => {
+    const { io } = captureIo()
+    const d = commandDeps()
+    d.usage.fetchWindows = async () => DORMANT
     expect(await runPrime({ ids: [], cold: true }, d, io)).toBe(0)
     expect(d.primed).toHaveLength(2)
   })

@@ -216,6 +216,7 @@ export async function main(argv: string[]): Promise<number> {
           scratchDir,
           configDir: join(configHome(), 'profiles', 'prime'),
           readWindows: usage.fetchWindows,
+          sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
         },
         now: new Date(),
       }, io)

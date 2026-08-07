@@ -1,14 +1,24 @@
 import { HOT_THRESHOLD_PCT, SPENT_THRESHOLD_PCT } from './constants'
-import type { AccountUsage } from './types'
+import type { AccountUsage, UsageWindows } from './types'
 
 export type State = 'cold' | 'warm' | 'hot' | 'spent' | 'unknown'
+
+/**
+ * Whether the five-hour clock is actually running. The reset time is the only
+ * trustworthy signal: the API reports a dormant account as `utilization: 0`
+ * with no `resets_at`, not as a null utilization. Reading the percentage alone
+ * makes every cold account look like a fresh warm one.
+ */
+export function hasOpenWindow(windows: UsageWindows): boolean {
+  return windows.fiveHourResetsAt !== null
+}
 
 export function classify(row: AccountUsage): State {
   if (row.error !== null) return 'unknown'
   // A spent weekly budget makes the account unusable no matter how fresh the
   // session window is — the weekly limit binds for days, not hours.
   if (row.weeklyPct !== null && row.weeklyPct >= SPENT_THRESHOLD_PCT) return 'spent'
-  if (row.fiveHourPct === null) return 'cold'
+  if (!hasOpenWindow(row) || row.fiveHourPct === null) return 'cold'
   if (row.fiveHourPct >= SPENT_THRESHOLD_PCT) return 'spent'
   if (row.fiveHourPct >= HOT_THRESHOLD_PCT) return 'hot'
   return 'warm'
@@ -23,7 +33,8 @@ export type Recommendation = {
 
 /** A cold account has its whole window available. */
 function fiveHourHeadroom(row: AccountUsage): number {
-  return row.fiveHourPct === null ? 100 : 100 - row.fiveHourPct
+  if (!hasOpenWindow(row) || row.fiveHourPct === null) return 100
+  return 100 - row.fiveHourPct
 }
 
 function weeklyHeadroom(row: AccountUsage): number {

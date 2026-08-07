@@ -22,6 +22,14 @@ export const PRIME_MODEL = 'haiku'
 /** The entire priming prompt. */
 export const PRIME_PROMPT = 'hi'
 
+/**
+ * The usage endpoint lags a freshly opened window by a second or two, so a
+ * single confirmation read right after the session can miss a window that did
+ * open. Poll instead of reporting a false negative.
+ */
+export const PRIME_CONFIRM_ATTEMPTS = 6
+export const PRIME_CONFIRM_DELAY_MS = 2_000
+
 /** Width of the usage bar, in cells. */
 export const BAR_CELLS = 9
 

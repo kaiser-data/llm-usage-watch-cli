@@ -22,16 +22,18 @@ describe('classify', () => {
     expect(classify(row({ id: 'a', fiveHourPct: null }))).toBe('cold')
   })
 
+  // A percentage only means anything while the clock is running, so these carry
+  // a reset time — a utilization with no reset is not a state the API produces.
   test('below the hot threshold is warm', () => {
-    expect(classify(row({ id: 'a', fiveHourPct: 69 }))).toBe('warm')
+    expect(classify(row({ id: 'a', fiveHourPct: 69, fiveHourResetsAt: new Date() }))).toBe('warm')
   })
 
   test('at the hot threshold is hot', () => {
-    expect(classify(row({ id: 'a', fiveHourPct: 70 }))).toBe('hot')
+    expect(classify(row({ id: 'a', fiveHourPct: 70, fiveHourResetsAt: new Date() }))).toBe('hot')
   })
 
   test('at the limit is spent', () => {
-    expect(classify(row({ id: 'a', fiveHourPct: 100 }))).toBe('spent')
+    expect(classify(row({ id: 'a', fiveHourPct: 100, fiveHourResetsAt: new Date() }))).toBe('spent')
   })
 
   test('an errored row is unknown', () => {
@@ -41,6 +43,18 @@ describe('classify', () => {
 
   test('zero percent with an active window is warm, not cold', () => {
     expect(classify(row({ id: 'a', fiveHourPct: 0, fiveHourResetsAt: new Date() }))).toBe('warm')
+  })
+
+  // What the live API actually sends for an account with no window: a zero
+  // utilization rather than a null one. Only the missing reset time says the
+  // clock is not running.
+  test('zero percent with no reset time is cold', () => {
+    expect(classify(row({ id: 'a', fiveHourPct: 0, fiveHourResetsAt: null }))).toBe('cold')
+  })
+
+  test('a spent weekly budget still outranks a cold session window', () => {
+    expect(classify(row({ id: 'a', fiveHourPct: 0, fiveHourResetsAt: null, weeklyPct: 100 })))
+      .toBe('spent')
   })
 })
 
@@ -83,6 +97,15 @@ describe('recommend', () => {
       row({ id: 'b', fiveHourPct: 90, fiveHourResetsAt: new Date() }),
     ])
     expect(result.useId).toBe('b')
+  })
+
+  test('treats a zero-percent account with no reset as maximum headroom', () => {
+    const result = recommend([
+      row({ id: 'a', fiveHourPct: 20, fiveHourResetsAt: new Date() }),
+      row({ id: 'b', fiveHourPct: 0, fiveHourResetsAt: null }),
+    ])
+    expect(result.useId).toBe('b')
+    expect(result.coldIds).toEqual(['b'])
   })
 
   test('lists cold accounts so the caller can nudge priming', () => {
