@@ -144,7 +144,10 @@ describe('runUse', () => {
     })
 
     expect(await runUse('spare', deps, io)).toBe(2)
-    expect(lines.join('\n')).toContain('cuw add spare')
+    // The remedy must carry --force: `spare` is already configured, so a bare
+    // `cuw add spare` is refused as a duplicate and dead-ends the user.
+    expect(lines.join('\n')).toContain('cuw add --force spare')
+    expect(lines.join('\n')).not.toMatch(/cuw add (?!--force)/)
     expect(await activeToken(deps.login)).toBe('a-main')
   })
 

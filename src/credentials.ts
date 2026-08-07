@@ -4,6 +4,7 @@ import {
   REFRESH_SKEW_MS,
   REQUIRED_SCOPE,
 } from './constants'
+import { RE_ADD_HINT } from './hints'
 import type { Credential } from './types'
 
 export type CredentialErrorCause = 'malformed' | 'insufficient-scope' | 'refresh-rejected'
@@ -17,7 +18,9 @@ export class CredentialError extends Error {
 
 const SETUP_TOKEN_HELP =
   'this looks like a setup-token, which is inference-only and cannot read usage. ' +
-  'Log into the account with `claude auth login`, then run `cuw add <id>` again.'
+  // Reached from both a first add and a re-record, so it names neither form:
+  // whichever the user ran is the one to repeat.
+  'Log into the account with `claude auth login`, then run the add again.'
 
 const SCOPE_HELP =
   `credential lacks the "${REQUIRED_SCOPE}" scope (inference-only). ` +
@@ -130,7 +133,7 @@ export async function refreshCredential(
   if (!response.ok) {
     // The body is discarded: it can echo the submitted refresh token.
     throw new CredentialError(
-      `refresh token expired or rejected (HTTP ${response.status}) — re-add the account with \`cuw add <id>\``,
+      `refresh token expired or rejected (HTTP ${response.status}) — re-add the account with \`${RE_ADD_HINT}\``,
       'refresh-rejected',
     )
   }

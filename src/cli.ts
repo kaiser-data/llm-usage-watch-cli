@@ -33,6 +33,7 @@ Usage:
   cuw [status] [--json]     Show configured Claude and active Codex usage
   cuw use [<id>]            Switch the Claude Code login to a subscription
   cuw add <id>              Store a long-lived token for a subscription
+  cuw add --force <id>      Re-record an account from the current login
   cuw rm <id>               Remove a subscription
   cuw prime <id>            Start the five-hour window on a subscription
   cuw prime --cold          Start the window on every idle subscription
@@ -163,9 +164,9 @@ export async function main(argv: string[]): Promise<number> {
     }
 
     case 'add': {
-      const id = rest[0]
+      const id = rest.find(argument => !argument.startsWith('--'))
       if (!id) {
-        io.err('usage: cuw add <id>')
+        io.err('usage: cuw add [--force] <id>')
         return EXIT_USAGE
       }
       return runAdd(id, {
@@ -178,7 +179,7 @@ export async function main(argv: string[]): Promise<number> {
           timeoutMs: REQUEST_TIMEOUT_MS,
           now: new Date(),
         }),
-      }, io)
+      }, io, { force: rest.includes('--force') })
     }
 
     case 'rm': {

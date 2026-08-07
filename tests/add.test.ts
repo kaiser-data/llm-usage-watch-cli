@@ -92,6 +92,14 @@ describe('runAdd', () => {
     expect(await runAdd('main', d, io)).toBe(1)
   })
 
+  test('points a duplicate id at --force', async () => {
+    const { io, out } = captureIo()
+    const d = await deps()
+    await runAdd('main', d, io)
+    await runAdd('main', d, io)
+    expect(out.join('')).toContain('--force')
+  })
+
   test('rejects an id that is not slug-safe', async () => {
     const { io } = captureIo()
     const d = await deps()
@@ -129,5 +137,81 @@ describe('runAdd identity', () => {
     expect(await runAdd('main', d, io)).toBe(2)
     expect(await loadRegistry(d.registryFile)).toEqual([])
     expect(d.stored.get('main')).toBeUndefined()
+  })
+})
+
+/**
+ * Re-recording migrates an account stored before the login blob was kept,
+ * which is the only way `cuw use` can ever restore it.
+ */
+describe('runAdd --force', () => {
+  test('re-records an existing account in place', async () => {
+    const { io } = captureIo()
+    const d = await deps()
+    await runAdd('main', d, io)
+
+    const migrated = {
+      ...d,
+      readLoginCredential: async () => loginBlob({ accessToken: 'fresh-access' }),
+      fetchIdentity: async () => ({ uuid: 'acc-new', email: 'new@example.com' }),
+    }
+    expect(await runAdd('main', migrated, io, { force: true })).toBe(0)
+
+    const stored = await loadRegistry(d.registryFile)
+    expect(stored).toHaveLength(1)
+    expect(stored[0]?.uuid).toBe('acc-new')
+    expect(stored[0]?.email).toBe('new@example.com')
+    expect(JSON.parse(d.stored.get('main') as string).accessToken).toBe('fresh-access')
+  })
+
+  test('preserves the order and label of the account it replaces', async () => {
+    const { io } = captureIo()
+    const d = await deps()
+    await runAdd('one', d, io)
+    await runAdd('two', d, io)
+    await runAdd('three', d, io)
+
+    expect(await runAdd('one', d, io, { force: true })).toBe(0)
+
+    const stored = await loadRegistry(d.registryFile)
+    expect(stored.map(a => a.id)).toEqual(['one', 'two', 'three'])
+    expect(stored.find(a => a.id === 'one')?.order).toBe(1)
+    expect(stored.find(a => a.id === 'one')?.label).toBe('one')
+  })
+
+  test('adds normally when the id is not yet configured', async () => {
+    const { io } = captureIo()
+    const d = await deps()
+    expect(await runAdd('main', d, io, { force: true })).toBe(0)
+    expect((await loadRegistry(d.registryFile)).map(a => a.id)).toEqual(['main'])
+  })
+
+  test('leaves the existing account intact when the new login is unusable', async () => {
+    const { io } = captureIo()
+    const d = await deps()
+    await runAdd('main', d, io)
+    const before = d.stored.get('main')
+
+    const broken = {
+      ...d,
+      readLoginCredential: async () => loginBlob({ scopes: ['user:inference'] }),
+    }
+    expect(await runAdd('main', broken, io, { force: true })).toBe(2)
+
+    expect(d.stored.get('main')).toBe(before)
+    expect((await loadRegistry(d.registryFile))[0]?.uuid).toBe('acc-existing')
+  })
+
+  test('leaves the existing account intact when the identity cannot be read', async () => {
+    const { io } = captureIo()
+    const d = await deps()
+    await runAdd('main', d, io)
+    const before = d.stored.get('main')
+
+    const broken = { ...d, fetchIdentity: async () => null }
+    expect(await runAdd('main', broken, io, { force: true })).toBe(2)
+
+    expect(d.stored.get('main')).toBe(before)
+    expect((await loadRegistry(d.registryFile))[0]?.email).toBe('existing@example.com')
   })
 })

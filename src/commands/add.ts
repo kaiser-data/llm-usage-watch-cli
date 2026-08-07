@@ -26,10 +26,22 @@ const NOT_LOGGED_IN =
  * endpoint — the usage endpoint exposes neither. The uuid is what lets a later
  * switch recognise this account in the live Keychain login.
  */
-export async function runAdd(id: string, deps: AddDeps, io: Io): Promise<number> {
+export type AddOptions = {
+  /** Re-record an already-configured account instead of refusing it. */
+  force?: boolean
+}
+
+export async function runAdd(
+  id: string,
+  deps: AddDeps,
+  io: Io,
+  options: AddOptions = {},
+): Promise<number> {
   const accounts = await loadRegistry(deps.registryFile)
-  if (accounts.some(account => account.id === id)) {
-    io.err(`"${id}" is already configured — remove it first with \`cuw rm ${id}\``)
+  const existing = accounts.find(account => account.id === id)
+  if (existing !== undefined && options.force !== true) {
+    io.err(`"${id}" is already configured — re-record it in place with`)
+    io.err(`\`cuw add --force ${id}\`, or remove it first with \`cuw rm ${id}\``)
     return 1
   }
 
@@ -59,11 +71,14 @@ export async function runAdd(id: string, deps: AddDeps, io: Io): Promise<number>
     return 2
   }
 
+  // Re-recording keeps the row where it was: `order` and `label` are the user's
+  // arrangement, not properties of the credential being refreshed.
   const order = accounts.reduce((max, account) => Math.max(max, account.order), 0) + 1
-  const updated = [
-    ...accounts,
-    { id, label: id, email: identity.email, order, uuid: identity.uuid },
-  ]
+  const updated = existing === undefined
+    ? [...accounts, { id, label: id, email: identity.email, order, uuid: identity.uuid }]
+    : accounts.map(account => account.id === id
+      ? { ...account, email: identity.email, uuid: identity.uuid }
+      : account)
 
   // Validate before touching the Keychain, so a bad id leaves no orphan item.
   try {
@@ -77,6 +92,8 @@ export async function runAdd(id: string, deps: AddDeps, io: Io): Promise<number>
   }
 
   await deps.keychain.set(id, serializeCredential(credential))
-  io.out(`stored "${id}" — run \`cuw\` to see it`)
+  io.out(existing === undefined
+    ? `stored "${id}" — run \`cuw\` to see it`
+    : `re-recorded "${id}" (${identity.email}) — \`cuw use ${id}\` can now restore it`)
   return 0
 }

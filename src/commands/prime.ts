@@ -1,4 +1,5 @@
 import { classify } from '../classify'
+import { reAddHint } from '../hints'
 import { formatDuration } from '../render'
 import type { Account } from '../types'
 import { collectUsage, type UsageDeps } from '../usage'
@@ -69,7 +70,7 @@ export async function runPrime(
     if (token === null) {
       return {
         id: account.id, ok: false, resetsAt: null, exitCode: 0,
-        detail: `no token stored — run \`cuw add ${account.id}\``,
+        detail: `no token stored — run \`${reAddHint(account.id)}\``,
       } satisfies PrimeResult
     }
     return primeAccount(account, token, deps.prime)

@@ -1,5 +1,6 @@
 import { recommend } from '../classify'
 import { isLegacyCredential, parseCredential, serializeCredential } from '../credentials'
+import { RE_ADD_HINT, reAddHint } from '../hints'
 import type { Keychain } from '../keychain'
 import { mergeLogin, type LoginBlob, type LoginStore } from '../login'
 import type { Identity } from '../profile'
@@ -80,7 +81,7 @@ export async function runUse(
 
   const stored = await deps.keychain.get(targetId)
   if (stored === null) {
-    io.err(`no token stored for "${targetId}" — run \`cuw add ${targetId}\``)
+    io.err(`no token stored for "${targetId}" — run \`${reAddHint(targetId)}\``)
     return 2
   }
 
@@ -88,7 +89,7 @@ export async function runUse(
   if (isLegacyCredential(target)) {
     io.err(`"${targetId}" was stored before cuw kept the full login blob, so it`)
     io.err('cannot be restored without losing plan metadata.')
-    io.err(`Re-add it: claude auth login && cuw add ${targetId}`)
+    io.err(`Re-add it: claude auth login && ${reAddHint(targetId)}`)
     return 2
   }
 
@@ -116,7 +117,7 @@ export async function runUse(
     if (unidentified.length > 0) {
       io.err('the active login is unknown, and these accounts have no recorded identity:')
       io.err(`  ${unidentified.map(account => account.id).join(', ')}`)
-      io.err('re-add them first: claude auth login && cuw add <id>')
+      io.err(`re-add them first: claude auth login && ${RE_ADD_HINT}`)
       return 2
     }
     activeId = await capture(live, identity, deps, io)

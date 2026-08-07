@@ -102,11 +102,17 @@ survive. If the login about to be replaced is not one `cuw` tracks, it is stored
 as a new account first, so you can always switch back.
 
 Accounts added before this feature existed were stored without the full login
-blob. `cuw use` refuses them; re-add each one once:
+blob, and without the account identity a switch needs to recognise them. `cuw
+use` refuses those, because restoring one would drop its plan metadata. Migrate
+each one once, by logging into it and re-recording it in place:
 
     claude auth login        # for that subscription
-    cuw rm work
-    cuw add work
+    cuw add --force work
+
+`--force` keeps the account's `order` and `label` — its row stays where you put
+it — and replaces only the credential and identity. It writes nothing unless the
+new login parses and its profile can be read, so a failed migration leaves the
+existing account exactly as it was.
 
 ## Priming cost
 

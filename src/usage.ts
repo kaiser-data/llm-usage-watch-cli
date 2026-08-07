@@ -1,3 +1,4 @@
+import { reAddHint } from './hints'
 import type { Keychain } from './keychain'
 import type { Account, AccountUsage, Subscription, UsageError, UsageWindows } from './types'
 import { AuthError } from './usage-api'
@@ -34,7 +35,7 @@ async function collectOne(account: Account, deps: UsageDeps): Promise<AccountUsa
   if (token === null) {
     return failed(account, {
       cause: 'no-token',
-      message: `no token stored — run \`cuw add ${account.id}\``,
+      message: `no token stored — run \`${reAddHint(account.id)}\``,
     })
   }
 
@@ -60,7 +61,7 @@ async function collectOne(account: Account, deps: UsageDeps): Promise<AccountUsa
     if (error instanceof AuthError) {
       return failed(account, {
         cause: 'auth',
-        message: `token rejected — re-mint with \`cuw add ${account.id}\``,
+        message: `token rejected — re-mint with \`${reAddHint(account.id)}\``,
       })
     }
   }
