@@ -180,6 +180,55 @@ describe('refreshCredential', () => {
     expect(refreshCredential(FULL, { fetcher, now: NOW })).rejects.toThrow(/re-add|expired/i)
   })
 
+  // `invalid_grant` (a dead or already-rotated token) and a server-side fault
+  // both arrive as an opaque 400. Without the code there is no way to tell a
+  // credential that needs re-adding from one that was rotated out from under us.
+  test('names the OAuth error code behind a rejection', async () => {
+    const fetcher = fetcherReturning({ error: 'invalid_grant' }, 400)
+    let message = ''
+    try {
+      await refreshCredential(FULL, { fetcher, now: NOW })
+    } catch (error) {
+      message = (error as Error).message
+    }
+    expect(message).toContain('invalid_grant')
+    expect(message).toContain('400')
+  })
+
+  test('never echoes the error description, which is free-form', async () => {
+    const fetcher = fetcherReturning({
+      error: 'invalid_grant',
+      error_description: 'token refresh-1 has already been used',
+    }, 400)
+    let message = ''
+    try {
+      await refreshCredential(FULL, { fetcher, now: NOW })
+    } catch (error) {
+      message = (error as Error).message
+    }
+    expect(message).toContain('invalid_grant')
+    expect(message).not.toContain('refresh-1')
+    expect(message).not.toContain('already been used')
+  })
+
+  test('omits an error code that is not a bare OAuth token', async () => {
+    const fetcher = fetcherReturning({ error: 'Bearer refresh-1 rejected' }, 400)
+    let message = ''
+    try {
+      await refreshCredential(FULL, { fetcher, now: NOW })
+    } catch (error) {
+      message = (error as Error).message
+    }
+    expect(message).not.toContain('refresh-1')
+    expect(message).toContain('400')
+  })
+
+  test('survives a rejection whose body is not JSON', async () => {
+    const fetcher = (async () =>
+      new Response('<html>gateway error</html>', { status: 502 })) as unknown as typeof fetch
+    expect(refreshCredential(FULL, { fetcher, now: NOW })).rejects.toThrow(/502/)
+  })
+
   test('refresh failure never leaks a token', async () => {
     const fetcher = fetcherReturning({ error: 'invalid_grant refresh-1' }, 400)
     let message = ''

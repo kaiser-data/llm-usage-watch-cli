@@ -1,95 +1,125 @@
 import { describe, expect, test } from 'bun:test'
-import { parseRateLimitHeaders, probeUsage } from '../src/usage-probe'
-import { HEADER_KEYS } from '../src/constants'
-import type { SpawnResult, Spawner } from '../src/spawn'
+import { parseRateLimitHeaders, probeUsage, ProbeError, type ProbeDeps } from '../src/usage-probe'
+import { HEADER_KEYS, PROBE_MODEL } from '../src/constants'
+import { AuthError } from '../src/usage-api'
 
-function logLine(key: string, value: string): string {
-  return `[api] response header ${key}: ${value}\n`
-}
+/** Shaped after a real 200, captured 2026-08-08. */
+const ALLOWED = new Headers({
+  [HEADER_KEYS.fiveHourStatus]: 'allowed',
+  [HEADER_KEYS.fiveHourUtilization]: '0.19',
+  [HEADER_KEYS.fiveHourReset]: '1786155000',
+  [HEADER_KEYS.weeklyStatus]: 'allowed',
+  [HEADER_KEYS.weeklyUtilization]: '0.33',
+  [HEADER_KEYS.weeklyReset]: '1786514400',
+})
 
-const SAMPLE =
-  logLine(HEADER_KEYS.fiveHourRemaining, '0.88') +
-  logLine(HEADER_KEYS.fiveHourReset, '1785700000') +
-  logLine(HEADER_KEYS.weeklyRemaining, '0.66') +
-  logLine(HEADER_KEYS.weeklyReset, '1786100000')
+/** Shaped after a real 429 on a spent account, captured 2026-08-08. */
+const REJECTED = new Headers({
+  [HEADER_KEYS.fiveHourStatus]: 'rejected',
+  [HEADER_KEYS.fiveHourUtilization]: '1.11',
+  [HEADER_KEYS.fiveHourReset]: '1786155000',
+  [HEADER_KEYS.weeklyStatus]: 'allowed',
+  [HEADER_KEYS.weeklyUtilization]: '0.4',
+  [HEADER_KEYS.weeklyReset]: '1786442400',
+})
 
 describe('parseRateLimitHeaders', () => {
-  test('converts remaining fraction into a used percentage', () => {
-    expect(parseRateLimitHeaders(SAMPLE).fiveHourPct).toBe(12)
-    expect(parseRateLimitHeaders(SAMPLE).weeklyPct).toBe(34)
+  test('reads utilization as the fraction already spent', () => {
+    // 0.19 spent is a nearly-untouched window, not a nearly-exhausted one.
+    expect(parseRateLimitHeaders(ALLOWED).fiveHourPct).toBe(19)
+    expect(parseRateLimitHeaders(ALLOWED).weeklyPct).toBe(33)
   })
 
   test('parses epoch-second reset values into dates', () => {
-    expect(parseRateLimitHeaders(SAMPLE).fiveHourResetsAt?.getTime()).toBe(1785700000 * 1000)
+    expect(parseRateLimitHeaders(ALLOWED).fiveHourResetsAt?.getTime())
+      .toBe(1786155000 * 1000)
+    expect(parseRateLimitHeaders(ALLOWED).weeklyResetsAt?.getTime())
+      .toBe(1786514400 * 1000)
   })
 
   test('is case-insensitive about header names', () => {
-    const upper = SAMPLE.toUpperCase()
-    expect(parseRateLimitHeaders(upper).fiveHourPct).toBe(12)
+    const upper = new Headers({
+      [HEADER_KEYS.fiveHourUtilization.toUpperCase()]: '0.19',
+    })
+    expect(parseRateLimitHeaders(upper).fiveHourPct).toBe(19)
   })
 
-  test('returns nulls when no rate-limit headers are present', () => {
-    const windows = parseRateLimitHeaders('[api] request sent\n')
-    expect(windows.fiveHourPct).toBeNull()
-    expect(windows.weeklyPct).toBeNull()
+  test('clamps an over-limit window to 100 rather than reporting 111%', () => {
+    expect(parseRateLimitHeaders(REJECTED).fiveHourPct).toBe(100)
   })
 
   test('yields null opus percentage when that header is absent', () => {
-    expect(parseRateLimitHeaders(SAMPLE).opusWeeklyPct).toBeNull()
+    expect(parseRateLimitHeaders(ALLOWED).opusWeeklyPct).toBeNull()
   })
 
-  test('parses the recorded fixture', async () => {
-    const fixture = await Bun.file(`${import.meta.dir}/fixtures/probe-debug.log`).text()
-    const windows = parseRateLimitHeaders(fixture)
-    expect(windows.fiveHourPct).toBe(12)
-    expect(windows.weeklyPct).toBe(34)
+  test('yields nulls when no rate-limit headers are present', () => {
+    const windows = parseRateLimitHeaders(new Headers({ 'content-type': 'application/json' }))
+    expect(windows.fiveHourPct).toBeNull()
+    expect(windows.weeklyPct).toBeNull()
+    expect(windows.fiveHourResetsAt).toBeNull()
   })
 })
 
 describe('probeUsage', () => {
-  function harness(result: SpawnResult, log: string) {
-    const calls: { argv: string[]; env: Record<string, string>; cwd: string }[] = []
-    const spawn: Spawner = async (argv, env, cwd) => {
-      calls.push({ argv, env, cwd })
-      return result
+  function harness(response: Response) {
+    const calls: { url: string; init: RequestInit }[] = []
+    const deps: ProbeDeps = {
+      fetcher: (async (url: string, init: RequestInit) => {
+        calls.push({ url: String(url), init })
+        return response
+      }) as unknown as typeof fetch,
+      endpoint: 'https://example.test/v1/messages',
+      model: PROBE_MODEL,
+      timeoutMs: 1_000,
     }
-    return {
-      calls,
-      deps: {
-        spawn,
-        scratchDir: '/tmp/cuw-empty',
-        configDir: '/tmp/cuw-profile',
-        logPath: '/tmp/cuw-debug.log',
-        readLog: async () => log,
-      },
-    }
+    return { calls, deps }
   }
 
-  test('invokes claude with the minimal isolated flag set', async () => {
-    const { calls, deps } = harness({ code: 0, stderrTail: '' }, SAMPLE)
-    await probeUsage('tok', deps)
-    const argv = calls[0]!.argv.join(' ')
-    expect(argv).toContain('--safe-mode')
-    expect(argv).toContain('--no-session-persistence')
-    expect(argv).toContain('--debug api')
+  test('returns parsed windows from a successful response', async () => {
+    const { deps } = harness(new Response('{}', { status: 200, headers: ALLOWED }))
+    const windows = await probeUsage('tok', deps)
+    expect(windows.fiveHourPct).toBe(19)
+    expect(windows.weeklyPct).toBe(33)
   })
 
-  test('passes the token by environment, never by argv', async () => {
-    const { calls, deps } = harness({ code: 0, stderrTail: '' }, SAMPLE)
+  test('reads a spent account from a 429 instead of failing', async () => {
+    // The whole point of the rewrite: an exhausted account is the case the
+    // tool most needs to report, and it is the case that returns 429.
+    const { deps } = harness(new Response('{}', { status: 429, headers: REJECTED }))
+    const windows = await probeUsage('tok', deps)
+    expect(windows.fiveHourPct).toBe(100)
+    expect(windows.weeklyPct).toBe(40)
+  })
+
+  test('sends the token as a bearer header, never in the body', async () => {
+    const { calls, deps } = harness(new Response('{}', { status: 200, headers: ALLOWED }))
     await probeUsage('sk-secret', deps)
-    expect(calls[0]!.argv.join(' ')).not.toContain('sk-secret')
-    expect(calls[0]!.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('sk-secret')
-    expect(calls[0]!.env.CLAUDE_CONFIG_DIR).toBe('/tmp/cuw-profile')
-    expect(calls[0]!.cwd).toBe('/tmp/cuw-empty')
+    const { init } = calls[0]!
+    expect(new Headers(init.headers).get('authorization')).toBe('Bearer sk-secret')
+    expect(String(init.body)).not.toContain('sk-secret')
   })
 
-  test('throws when the claude invocation fails', async () => {
-    const { deps } = harness({ code: 1, stderrTail: 'nope' }, '')
-    expect(probeUsage('tok', deps)).rejects.toThrow(/probe failed/i)
+  test('asks for the smallest possible completion', async () => {
+    const { calls, deps } = harness(new Response('{}', { status: 200, headers: ALLOWED }))
+    await probeUsage('tok', deps)
+    const body = JSON.parse(String(calls[0]!.init.body))
+    expect(body.max_tokens).toBe(1)
+    expect(body.model).toBe(PROBE_MODEL)
+  })
+
+  test('raises AuthError on a rejected token, so no retry is attempted', async () => {
+    const { deps } = harness(new Response('{}', { status: 401 }))
+    expect(probeUsage('tok', deps)).rejects.toBeInstanceOf(AuthError)
+  })
+
+  test('throws when the response carries no rate-limit headers', async () => {
+    // A silent all-null reading is what let a dead probe masquerade as 0% used.
+    const { deps } = harness(new Response('{}', { status: 200 }))
+    expect(probeUsage('tok', deps)).rejects.toBeInstanceOf(ProbeError)
   })
 
   test('failure message never contains the token', async () => {
-    const { deps } = harness({ code: 1, stderrTail: 'bad token sk-secret here' }, '')
+    const { deps } = harness(new Response('bad token sk-secret', { status: 500 }))
     let message = ''
     try {
       await probeUsage('sk-secret', deps)
@@ -97,10 +127,5 @@ describe('probeUsage', () => {
       message = (error as Error).message
     }
     expect(message).not.toContain('sk-secret')
-  })
-
-  test('returns parsed windows on success', async () => {
-    const { deps } = harness({ code: 0, stderrTail: '' }, SAMPLE)
-    expect((await probeUsage('tok', deps)).fiveHourPct).toBe(12)
   })
 })

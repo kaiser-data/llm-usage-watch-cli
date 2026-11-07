@@ -1,6 +1,6 @@
 import { BAR_CELLS } from './constants'
 import { classify, type Recommendation, type State } from './classify'
-import type { AccountUsage, CodexUsage } from './types'
+import type { AccountUsage, CodexUsage, CursorUsage, GrokUsage } from './types'
 
 const MS_PER_MINUTE = 60_000
 const MS_PER_HOUR = 3_600_000
@@ -56,8 +56,13 @@ function paint(text: string, color: string, enabled: boolean): string {
   return enabled ? `${color}${text}${ANSI.reset}` : text
 }
 
+/**
+ * An absent figure is not a zero. Printing null as "0%" made an unreadable
+ * account look like a completely fresh one — the most attractive row in the
+ * table — which is the opposite of what the reader needs to know.
+ */
 function pctText(pct: number | null): string {
-  return pct === null ? '0%' : `${pct}%`
+  return pct === null ? '—' : `${pct}%`
 }
 
 function countdown(resetsAt: Date | null, now: Date): string {
@@ -192,6 +197,69 @@ export function renderCodexUsage(usage: CodexUsage, opts: RenderOptions): string
     `${window.role} ${codexDuration(window.durationMinutes)}`.padEnd(13),
     `${String(window.usedPct).padStart(3)}%  ${bar(window.usedPct)}`,
     countdown(window.resetsAt, opts.now).padStart(6),
+  ].join('  '))
+
+  return [heading, header, rule, ...body, ''].join('\n')
+}
+
+/** Renders Cursor separately — USD pool + Auto/API lanes, not Claude windows. */
+export function renderCursorUsage(usage: CursorUsage, opts: RenderOptions): string {
+  return renderSimpleMeterSection('CURSOR', usage, opts)
+}
+
+/** Renders Grok separately — monthly credit pool (+ optional on-demand). */
+export function renderGrokUsage(usage: GrokUsage, opts: RenderOptions): string {
+  return renderSimpleMeterSection('GROK', usage, opts)
+}
+
+type SimpleMeterUsage = {
+  plan: string | null
+  limits: Array<{
+    id: string
+    name: string | null
+    usedPct: number
+    resetsAt: Date | null
+  }>
+  error: { message: string } | null
+}
+
+function renderSimpleMeterSection(
+  title: string,
+  usage: SimpleMeterUsage,
+  opts: RenderOptions,
+): string {
+  const heading = `${title}  active  PLAN ${usage.plan ?? '—'}`
+  if (usage.error !== null) {
+    const mark = paint('✗ error', ANSI.red, opts.color)
+    return `${heading}\n${mark}  ${usage.error.message}\n`
+  }
+
+  if (usage.limits.length === 0) {
+    return `${heading}\nNo limit windows reported.\n`
+  }
+
+  const labelWidth = Math.max(
+    5,
+    ...usage.limits.map(limit => (limit.name ?? limit.id).length),
+  )
+  const header = paint(
+    [
+      'LIMIT'.padEnd(labelWidth),
+      `USED${' '.repeat(BAR_CELLS + 2)}`,
+      'RESETS',
+    ].join('  '),
+    ANSI.dim,
+    opts.color,
+  )
+  const rule = paint(
+    '─'.repeat(Math.min(opts.width, labelWidth + BAR_CELLS + 24)),
+    ANSI.dim,
+    opts.color,
+  )
+  const body = usage.limits.map(limit => [
+    (limit.name ?? limit.id).padEnd(labelWidth),
+    `${String(limit.usedPct).padStart(3)}%  ${bar(limit.usedPct)}`,
+    countdown(limit.resetsAt, opts.now).padStart(6),
   ].join('  '))
 
   return [heading, header, rule, ...body, ''].join('\n')

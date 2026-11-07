@@ -23,6 +23,7 @@ export type UsageErrorCause =
   | 'auth'
   | 'network'
   | 'schema'
+  | 'rate-limited'
   | 'probe-failed'
 
 export type UsageError = {
@@ -56,6 +57,56 @@ export type CodexUsage = {
   plan: string | null
   limits: CodexUsageLimit[]
   error: { cause: CodexErrorCause; message: string } | null
+}
+
+export type CursorErrorCause =
+  | 'not-installed'
+  | 'not-logged-in'
+  | 'auth'
+  | 'network'
+  | 'schema'
+  | 'timeout'
+
+export type CursorLimitId = 'plan' | 'auto' | 'api' | 'on-demand'
+
+export type CursorUsageLimit = {
+  id: CursorLimitId
+  name: string | null
+  usedPct: number
+  resetsAt: Date | null
+}
+
+export type CursorUsage = {
+  provider: 'cursor'
+  plan: string | null
+  periodEnd: Date | null
+  limits: CursorUsageLimit[]
+  error: { cause: CursorErrorCause; message: string } | null
+}
+
+export type GrokErrorCause =
+  | 'not-installed'
+  | 'not-logged-in'
+  | 'auth'
+  | 'network'
+  | 'schema'
+  | 'timeout'
+
+export type GrokLimitId = 'monthly' | 'on-demand'
+
+export type GrokUsageLimit = {
+  id: GrokLimitId
+  name: string | null
+  usedPct: number
+  resetsAt: Date | null
+}
+
+export type GrokUsage = {
+  provider: 'grok'
+  plan: string | null
+  periodEnd: Date | null
+  limits: GrokUsageLimit[]
+  error: { cause: GrokErrorCause; message: string } | null
 }
 
 export type AccountUsage = UsageWindows & {

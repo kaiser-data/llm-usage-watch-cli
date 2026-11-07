@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { runDoctor, type DoctorDeps } from '../src/commands/doctor'
+import { CredentialError } from '../src/credentials'
 import type { Account, UsageWindows } from '../src/types'
 
 const WINDOWS: UsageWindows = {
@@ -36,6 +37,25 @@ describe('runDoctor', () => {
     expect(await runDoctor(deps(), io)).toBe(0)
     expect(out.join('')).toContain('main')
     expect(out.join('')).toContain('api')
+  })
+
+  // Doctor is the command a user reaches for *because* a credential is broken.
+  // It has to survive one, not die on it.
+  test('reports a rejected refresh token instead of throwing', async () => {
+    const { io, out } = captureIo()
+    const code = await runDoctor(deps({ usage: {
+      keychain: {
+        get: async () => {
+          throw new CredentialError('refresh token expired or rejected (HTTP 400)', 'refresh-rejected')
+        },
+        set: async () => {},
+        remove: async () => {},
+      },
+      fetchWindows: async () => WINDOWS,
+      probeWindows: async () => WINDOWS,
+    } }), io)
+    expect(code).toBe(2)
+    expect(out.join('')).toContain('refresh token expired')
   })
 
   test('flags the probe downgrade', async () => {

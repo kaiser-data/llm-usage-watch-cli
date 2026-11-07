@@ -7,6 +7,15 @@ let server: ReturnType<typeof Bun.serve>
 let home: string
 let fakeBin: string
 let mode: 'ok' | 'unauthorized' | 'garbage' = 'ok'
+let probeMode: 'headers' | 'bare' = 'headers'
+
+/** The live probe reads these off a real inference response. */
+const PROBE_HEADERS = {
+  'anthropic-ratelimit-unified-5h-utilization': '0.19',
+  'anthropic-ratelimit-unified-5h-reset': '4070995200',
+  'anthropic-ratelimit-unified-7d-utilization': '0.33',
+  'anthropic-ratelimit-unified-7d-reset': '4070995200',
+}
 
 const FIXTURE = {
   five_hour: { utilization: 12.0, resets_at: '2099-01-01T00:00:00Z' },
@@ -41,6 +50,12 @@ beforeAll(async () => {
       if (request.headers.get('authorization') !== 'Bearer test-token') {
         return new Response('{}', { status: 401 })
       }
+      if (new URL(request.url).pathname === '/probe') {
+        return new Response('{}', {
+          status: 200,
+          headers: probeMode === 'headers' ? PROBE_HEADERS : {},
+        })
+      }
       if (mode === 'unauthorized') return new Response('{}', { status: 401 })
       if (mode === 'garbage') return new Response('{"nothing":"useful"}', { status: 200 })
       return Response.json(FIXTURE)
@@ -68,6 +83,7 @@ async function runCli(args: string[]): Promise<{ code: number; stdout: string }>
       ...process.env,
       HOME: home,
       CUW_ENDPOINT: `http://localhost:${server.port}/usage`,
+      CUW_PROBE_ENDPOINT: `http://localhost:${server.port}/probe`,
       CUW_FAKE_TOKEN: 'test-token',
       PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
     },
@@ -79,7 +95,7 @@ async function runCli(args: string[]): Promise<{ code: number; stdout: string }>
 }
 
 describe('cuw end to end', () => {
-  test('renders Claude and active Codex usage', async () => {
+  test('renders Claude, Codex, Cursor, and Grok sections', async () => {
     mode = 'ok'
     const { code, stdout } = await runCli([])
     expect(code).toBe(0)
@@ -87,6 +103,8 @@ describe('cuw end to end', () => {
     expect(stdout).toContain('12%')
     expect(stdout).toContain('CODEX')
     expect(stdout).toContain('73%')
+    expect(stdout).toContain('CURSOR')
+    expect(stdout).toContain('GROK')
   })
 
   test('emits combined JSON with --json', async () => {
@@ -95,6 +113,40 @@ describe('cuw end to end', () => {
     const parsed = JSON.parse(stdout)
     expect(parsed.claude[0].fiveHourPct).toBe(12)
     expect(parsed.codex.limits[0].windows[0].usedPct).toBe(73)
+    expect(parsed.cursor.provider).toBe('cursor')
+    expect(parsed.cursor.error?.cause).toBe('not-installed')
+    expect(parsed.grok.provider).toBe('grok')
+    expect(parsed.grok.error?.cause).toBe('not-installed')
+  })
+
+  test('falls back to the probe when the usage API returns nothing usable', async () => {
+    mode = 'garbage'
+    probeMode = 'headers'
+    const { stdout } = await runCli(['status', '--json'])
+    const parsed = JSON.parse(stdout)
+    expect(parsed.claude[0].source).toBe('probe')
+    expect(parsed.claude[0].fiveHourPct).toBe(19)
+    expect(parsed.claude[0].error).toBeNull()
+  })
+
+  test('reports an error when the probe response carries no rate-limit headers', async () => {
+    // The failure that shipped silently: a probe that parsed nothing was
+    // reported as a healthy account sitting at 0%, which then won the
+    // recommendation. It must surface as an error instead.
+    mode = 'garbage'
+    probeMode = 'bare'
+    const { stdout } = await runCli(['status', '--json'])
+    const parsed = JSON.parse(stdout)
+    expect(parsed.claude[0].error?.cause).toBe('probe-failed')
+    expect(parsed.claude[0].fiveHourPct).toBeNull()
+    expect(parsed.claude[0].state).toBe('unknown')
+  })
+
+  test('never recommends an account it could not read', async () => {
+    mode = 'garbage'
+    probeMode = 'bare'
+    const { stdout } = await runCli([])
+    expect(stdout).not.toMatch(/→ use: main/)
   })
 
   test('exits 2 on an unauthorized token', async () => {

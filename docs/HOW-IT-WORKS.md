@@ -4,8 +4,9 @@ A working reference for whoever picks this up next — including future me.
 
 ## The problem it solves
 
-Several Claude subscriptions plus one active Codex account, one machine. Two
-costs made the Claude subscriptions painful to use together:
+Several Claude subscriptions plus one active Codex account, one active Cursor
+login, and one active Grok login, one machine. Two costs made the Claude
+subscriptions painful to use together:
 
 1. **Seeing usage required switching logins.** `claude auth login` holds exactly
    one credential, so checking another subscription meant logging out, logging
@@ -19,8 +20,10 @@ active login, and `cuw prime` opens a window for a few tokens so the accounts
 are staggered and one is always ready.
 
 The same status command also reads the account-wide limits for the currently
-logged-in Codex account. That read is independent of any running Codex app,
-conversation, or agent session.
+logged-in Codex account, the usage meter for the currently logged-in Cursor
+account, and the Grok credit meter (grokmeter) for the currently logged-in Grok
+CLI session. The Codex read is independent of any running Codex app,
+conversation, or agent session. Cursor and Grok use their local sessions only.
 
 ## Current state
 
@@ -41,6 +44,18 @@ CODEX  active  PLAN plus
 LIMIT  WINDOW         USED             RESETS
 ──────────────────────────────────────────────
 codex  primary 7d      73%  ▓▓▓▓▓▓▓░░      4d
+
+CURSOR  active  PLAN pro
+LIMIT       USED             RESETS
+──────────────────────────────────
+plan         46%  ▓▓▓▓░░░░░     12d
+auto          0%  ░░░░░░░░░     12d
+api          46%  ▓▓▓▓░░░░░     12d
+
+GROK  active  PLAN pro
+LIMIT       USED             RESETS
+──────────────────────────────────
+monthly       1%  ░░░░░░░░░     24d
 ```
 
 ## Authentication — the part that took three attempts to get right
@@ -139,6 +154,22 @@ process boundary. Raw protocol errors and stderr are discarded.
 Claude and Codex collection start concurrently. A Codex failure becomes a safe
 message in the Codex section and cannot suppress the Claude table,
 recommendation, or exit code.
+
+### Cursor: local session + dashboard RPC
+
+For the user-facing setup and output reference, see
+[`CURSOR-USAGE.md`](CURSOR-USAGE.md).
+
+For the active Cursor login, `cuw` opens Cursor's `state.vscdb` read-only, loads
+the access/refresh tokens and membership type, refreshes the access token in
+memory when the JWT is near expiry, and calls
+`GetCurrentPeriodUsage` on `api2.cursor.sh`. Normalized plan / Auto / API /
+optional on-demand percentages cross the boundary. Tokens are never copied into
+the `cuw` Keychain and never written back into Cursor's database.
+
+Claude, Codex, and Cursor collection start concurrently. A Cursor failure
+becomes a safe message in the Cursor section and cannot suppress the Claude
+table, recommendation, or exit code.
 
 ## Choosing an account
 
@@ -270,6 +301,8 @@ cli.ts                 argument parsing, dependency wiring, the only place
   ├─ usage.ts          per-account orchestration and fallback policy
   ├─ codex-usage.ts    validate/normalize arbitrary Codex limit buckets
   ├─ codex-app-server.ts short-lived JSONL client + process lifecycle
+  ├─ cursor-auth.ts    read-only Cursor state.vscdb session lookup
+  ├─ cursor-usage.ts   dashboard RPC + normalize Cursor meter rows
   ├─ classify.ts       state + recommendation            (pure)
   ├─ render.ts         table, bars, countdowns, colour   (pure)
   ├─ login.ts          the live login item: read, pure merge, write
@@ -287,18 +320,21 @@ exhaustively testable.
   writer of `claudeAiOauth`, and it preserves every other top-level key. The MCP
   server tokens live in that same item.
 - **Tokens may appear only** in `keychain.ts`, `credentials.ts`, `login.ts`,
-  `token-source.ts`, `usage-probe.ts`, `prime.ts` and `cli.ts`. Never in a
-  render, JSON, or log path. Error messages discard response bodies and stderr
-  tails that could echo credentials; `prime.ts` has a `redact()` helper.
+  `token-source.ts`, `usage-probe.ts`, `prime.ts`, `cursor-auth.ts`,
+  `cursor-usage.ts`, and `cli.ts`. Never in a render, JSON, or log path. Error
+  messages discard response bodies and stderr tails that could echo
+  credentials; `prime.ts` has a `redact()` helper.
 - **Never auto-probe for routine reads.** See above.
 - **Never read Codex credentials or session files directly.** Authentication
   stays inside `codex app-server`; raw stdout messages and stderr never reach
   terminal or JSON output.
+- **Never persist Cursor tokens in cuw storage.** Read `state.vscdb` read-only;
+  refresh only in memory; never write tokens back into Cursor's database.
 - **One failing account or provider must never fail the command.** Each Claude
-  row carries its own error, and Codex has a provider-level safe error. Claude
-  and Codex run independently under `Promise.all`.
-- **Codex never affects Claude recommendation or exit status.** Exit `2`
-  continues to mean a missing or rejected Claude credential.
+  row carries its own error; Codex and Cursor have provider-level safe errors.
+  Claude, Codex, and Cursor run independently under `Promise.all`.
+- **Codex and Cursor never affect Claude recommendation or exit status.** Exit
+  `2` continues to mean a missing or rejected Claude credential.
 - **Never report a primed window without confirming it.**
 - **The test fixture is synthetic** (`tests/fixtures/usage-api.json`: year-2099
   timestamps, USD, zeroed amounts) because the repo is public. Do not replace it
@@ -313,9 +349,11 @@ exhaustively testable.
 - **Only the active Codex account is shown.** This version does not register,
   switch, or aggregate multiple Codex accounts. The Codex CLI must be installed
   and logged in, but no Codex session needs to be running.
-- **The JSON top level changed intentionally.** `cuw status --json` returns
-  `{ "claude": [...], "codex": {...} }`; consumers of the former top-level
-  Claude array must select the `claude` property.
+- **Only the active Cursor login is shown.** This version does not register or
+  switch Cursor accounts. Cursor must be installed and signed in locally.
+- **The JSON top level is a combined envelope.** `cuw status --json` returns
+  `{ "claude": [...], "codex": {...}, "cursor": {...} }`; consumers of the
+  former top-level Claude array must select the `claude` property.
 - **No subscription end date exists.** The API exposes no `current_period_end`
   or `subscription_ends_at`. The `RENEWS` column is *derived* — the next monthly
   anniversary of `subscription_created_at` — and is prefixed `~` to say so. An
@@ -329,8 +367,9 @@ exhaustively testable.
   `POST /v1/oauth/token` returns `rate_limit_error`, and a throttled response is
   indistinguishable from a dead refresh token. If a row suddenly says "re-add",
   wait before concluding the credential is broken.
-- macOS only: Claude management depends on `security(1)` and the `claude` CLI;
-  Codex reporting depends on the `codex` CLI.
+- macOS only for Claude Keychain management: Claude management depends on
+  `security(1)` and the `claude` CLI; Codex reporting depends on the `codex`
+  CLI; Cursor reporting depends on a local Cursor install and login.
 
 ## The one change worth making next
 

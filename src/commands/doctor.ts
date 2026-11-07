@@ -30,7 +30,7 @@ export async function runDoctor(deps: DoctorDeps, io: Io): Promise<number> {
       continue
     }
     const note = row.source === 'probe'
-      ? 'usage API unavailable, using the probe fallback (slower, and each check opens a window)'
+      ? 'usage API unavailable, using the probe fallback (spends a request, and opens a window on an idle account)'
       : 'usage API healthy'
     io.out(`✓ ${row.id}: ${row.source} — ${note}`)
   }

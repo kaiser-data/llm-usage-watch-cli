@@ -1,8 +1,15 @@
 import { describe, expect, test } from 'bun:test'
-import { bar, formatDuration, renderCodexUsage, renderTable } from '../src/render'
+import {
+  bar,
+  formatDuration,
+  renderCodexUsage,
+  renderCursorUsage,
+  renderGrokUsage,
+  renderTable,
+} from '../src/render'
 import { recommend } from '../src/classify'
 import { BAR_CELLS } from '../src/constants'
-import type { AccountUsage, CodexUsage } from '../src/types'
+import type { AccountUsage, CodexUsage, CursorUsage, GrokUsage } from '../src/types'
 
 const NOW = new Date('2026-08-03T08:00:00Z')
 const OPTS = { color: false, width: 80, now: NOW }
@@ -267,5 +274,113 @@ describe('renderCodexUsage', () => {
   test('emits ANSI escapes only when color is enabled', () => {
     expect(renderCodexUsage(CODEX, OPTS)).not.toMatch(ANSI_PATTERN)
     expect(renderCodexUsage(CODEX, { ...OPTS, color: true })).toMatch(ANSI_PATTERN)
+  })
+})
+
+const CURSOR: CursorUsage = {
+  provider: 'cursor',
+  plan: 'pro',
+  periodEnd: new Date('2026-08-20T08:00:00Z'),
+  limits: [
+    { id: 'plan', name: 'plan', usedPct: 46, resetsAt: new Date('2026-08-20T08:00:00Z') },
+    { id: 'auto', name: 'auto', usedPct: 0, resetsAt: new Date('2026-08-20T08:00:00Z') },
+    { id: 'api', name: 'api', usedPct: 46, resetsAt: new Date('2026-08-20T08:00:00Z') },
+  ],
+  error: null,
+}
+
+describe('renderCursorUsage', () => {
+  test('renders active plan and every returned limit', () => {
+    const output = renderCursorUsage(CURSOR, OPTS)
+
+    expect(output).toContain('CURSOR')
+    expect(output).toContain('active')
+    expect(output).toContain('pro')
+    expect(output).toContain('plan')
+    expect(output).toContain('auto')
+    expect(output).toContain('api')
+    expect(output).toContain('46%')
+    expect(output).toContain('17d')
+    expect(output).not.toMatch(ANSI_PATTERN)
+  })
+
+  test('renders a safe error without a table', () => {
+    const failed: CursorUsage = {
+      provider: 'cursor',
+      plan: null,
+      periodEnd: null,
+      limits: [],
+      error: {
+        cause: 'not-logged-in',
+        message: 'Cursor is not logged in on this machine',
+      },
+    }
+
+    const output = renderCursorUsage(failed, OPTS)
+    expect(output).toContain('not logged in')
+    expect(output).not.toContain('LIMIT')
+  })
+
+  test('renders an explicit message when no limits are reported', () => {
+    expect(renderCursorUsage({ ...CURSOR, limits: [] }, OPTS))
+      .toContain('No limit windows')
+  })
+
+  test('emits ANSI escapes only when color is enabled', () => {
+    expect(renderCursorUsage(CURSOR, OPTS)).not.toMatch(ANSI_PATTERN)
+    expect(renderCursorUsage(CURSOR, { ...OPTS, color: true })).toMatch(ANSI_PATTERN)
+  })
+})
+
+const GROK: GrokUsage = {
+  provider: 'grok',
+  plan: 'pro',
+  periodEnd: new Date('2026-09-01T00:00:00Z'),
+  limits: [
+    { id: 'monthly', name: 'monthly', usedPct: 10, resetsAt: new Date('2026-09-01T00:00:00Z') },
+    { id: 'on-demand', name: 'on-demand', usedPct: 20, resetsAt: new Date('2026-09-01T00:00:00Z') },
+  ],
+  error: null,
+}
+
+describe('renderGrokUsage', () => {
+  test('renders active plan and every returned limit', () => {
+    const output = renderGrokUsage(GROK, OPTS)
+
+    expect(output).toContain('GROK')
+    expect(output).toContain('active')
+    expect(output).toContain('pro')
+    expect(output).toContain('monthly')
+    expect(output).toContain('on-demand')
+    expect(output).toContain('10%')
+    expect(output).toContain('20%')
+    expect(output).not.toMatch(ANSI_PATTERN)
+  })
+
+  test('renders a safe error without a table', () => {
+    const failed: GrokUsage = {
+      provider: 'grok',
+      plan: null,
+      periodEnd: null,
+      limits: [],
+      error: {
+        cause: 'not-logged-in',
+        message: 'Grok is not logged in on this machine — run `grok login`',
+      },
+    }
+
+    const output = renderGrokUsage(failed, OPTS)
+    expect(output).toContain('not logged in')
+    expect(output).not.toContain('LIMIT')
+  })
+
+  test('renders an explicit message when no limits are reported', () => {
+    expect(renderGrokUsage({ ...GROK, limits: [] }, OPTS))
+      .toContain('No limit windows')
+  })
+
+  test('emits ANSI escapes only when color is enabled', () => {
+    expect(renderGrokUsage(GROK, OPTS)).not.toMatch(ANSI_PATTERN)
+    expect(renderGrokUsage(GROK, { ...OPTS, color: true })).toMatch(ANSI_PATTERN)
   })
 })

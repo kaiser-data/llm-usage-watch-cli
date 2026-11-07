@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import { runStatus, type StatusDeps } from '../src/commands/status'
-import type { Account, CodexUsage, UsageWindows } from '../src/types'
+import type {
+  Account,
+  CodexUsage,
+  CursorUsage,
+  GrokUsage,
+  UsageWindows,
+} from '../src/types'
 
 const NOW = new Date('2026-08-03T08:00:00Z')
 
@@ -28,6 +34,28 @@ const CODEX: CodexUsage = {
   error: null,
 }
 
+const CURSOR: CursorUsage = {
+  provider: 'cursor',
+  plan: 'pro',
+  periodEnd: new Date('2026-08-20T08:00:00Z'),
+  limits: [
+    { id: 'plan', name: 'plan', usedPct: 46, resetsAt: new Date('2026-08-20T08:00:00Z') },
+    { id: 'auto', name: 'auto', usedPct: 0, resetsAt: new Date('2026-08-20T08:00:00Z') },
+    { id: 'api', name: 'api', usedPct: 46, resetsAt: new Date('2026-08-20T08:00:00Z') },
+  ],
+  error: null,
+}
+
+const GROK: GrokUsage = {
+  provider: 'grok',
+  plan: 'pro',
+  periodEnd: new Date('2026-09-01T00:00:00Z'),
+  limits: [
+    { id: 'monthly', name: 'monthly', usedPct: 1, resetsAt: new Date('2026-09-01T00:00:00Z') },
+  ],
+  error: null,
+}
+
 const accounts: Account[] = [{ id: 'main', label: 'main', email: 'm@x.com', order: 1 }]
 
 function deps(overrides: Partial<StatusDeps> = {}): StatusDeps {
@@ -37,6 +65,8 @@ function deps(overrides: Partial<StatusDeps> = {}): StatusDeps {
     width: 80,
     now: NOW,
     collectCodex: async () => CODEX,
+    collectCursor: async () => CURSOR,
+    collectGrok: async () => GROK,
     usage: {
       keychain: { get: async () => 'tok', set: async () => {}, remove: async () => {} },
       fetchWindows: async () => WINDOWS,
@@ -60,6 +90,10 @@ describe('runStatus', () => {
     expect(out.join('')).toContain('3h41m')
     expect(out.join('')).toContain('CODEX')
     expect(out.join('')).toContain('73%')
+    expect(out.join('')).toContain('CURSOR')
+    expect(out.join('')).toContain('46%')
+    expect(out.join('')).toContain('GROK')
+    expect(out.join('')).toContain('monthly')
   })
 
   test('emits the combined JSON envelope', async () => {
@@ -71,6 +105,10 @@ describe('runStatus', () => {
     expect(parsed.claude[0].state).toBe('warm')
     expect(parsed.codex.plan).toBe('plus')
     expect(parsed.codex.limits[0].windows[0].usedPct).toBe(73)
+    expect(parsed.cursor.plan).toBe('pro')
+    expect(parsed.cursor.limits[0].usedPct).toBe(46)
+    expect(parsed.grok.plan).toBe('pro')
+    expect(parsed.grok.limits[0].usedPct).toBe(1)
   })
 
   test('JSON output never contains a token', async () => {
@@ -97,6 +135,8 @@ describe('runStatus', () => {
     expect(out.join('')).toMatch(/cuw add/)
     expect(out.join('')).toContain('CODEX')
     expect(out.join('')).toContain('73%')
+    expect(out.join('')).toContain('CURSOR')
+    expect(out.join('')).toContain('GROK')
   })
 
   test('a Codex error does not affect the exit code', async () => {
@@ -125,14 +165,78 @@ describe('runStatus', () => {
     expect(out.join('')).not.toContain('secret-detail')
   })
 
-  test('starts Claude and Codex collection concurrently', async () => {
+  test('a Cursor error does not affect the exit code', async () => {
+    const failed: CursorUsage = {
+      provider: 'cursor',
+      plan: null,
+      periodEnd: null,
+      limits: [],
+      error: { cause: 'timeout', message: 'Cursor usage check timed out' },
+    }
+    const { io, out } = captureIo()
+
+    expect(await runStatus({ json: false }, deps({
+      collectCursor: async () => failed,
+    }), io)).toBe(0)
+    expect(out.join('')).toContain('timed out')
+  })
+
+  test('an unexpected Cursor rejection is isolated from Claude output', async () => {
+    const { io, out } = captureIo()
+
+    expect(await runStatus({ json: false }, deps({
+      collectCursor: async () => { throw new Error('cursor-secret') },
+    }), io)).toBe(0)
+    expect(out.join('')).toContain('main')
+    expect(out.join('')).toContain('Cursor usage could not be read')
+    expect(out.join('')).not.toContain('cursor-secret')
+  })
+
+  test('a Grok error does not affect the exit code', async () => {
+    const failed: GrokUsage = {
+      provider: 'grok',
+      plan: null,
+      periodEnd: null,
+      limits: [],
+      error: { cause: 'timeout', message: 'Grok usage check timed out' },
+    }
+    const { io, out } = captureIo()
+
+    expect(await runStatus({ json: false }, deps({
+      collectGrok: async () => failed,
+    }), io)).toBe(0)
+    expect(out.join('')).toContain('timed out')
+  })
+
+  test('an unexpected Grok rejection is isolated from Claude output', async () => {
+    const { io, out } = captureIo()
+
+    expect(await runStatus({ json: false }, deps({
+      collectGrok: async () => { throw new Error('grok-secret') },
+    }), io)).toBe(0)
+    expect(out.join('')).toContain('main')
+    expect(out.join('')).toContain('Grok usage could not be read')
+    expect(out.join('')).not.toContain('grok-secret')
+  })
+
+  test('starts Claude, Codex, Cursor, and Grok collection concurrently', async () => {
     let releaseClaude: (() => void) | undefined
     let codexStarted = false
+    let cursorStarted = false
+    let grokStarted = false
     const claudeGate = new Promise<void>(resolve => { releaseClaude = resolve })
     const configured = deps({
       collectCodex: async () => {
         codexStarted = true
         return CODEX
+      },
+      collectCursor: async () => {
+        cursorStarted = true
+        return CURSOR
+      },
+      collectGrok: async () => {
+        grokStarted = true
+        return GROK
       },
       usage: {
         keychain: {
@@ -152,6 +256,8 @@ describe('runStatus', () => {
     const running = runStatus({ json: false }, configured, io)
     await Promise.resolve()
     expect(codexStarted).toBe(true)
+    expect(cursorStarted).toBe(true)
+    expect(grokStarted).toBe(true)
     releaseClaude?.()
     await running
   })

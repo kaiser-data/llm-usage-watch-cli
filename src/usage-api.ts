@@ -16,6 +16,18 @@ export class AuthError extends Error {
 }
 
 /**
+ * The usage endpoint throttled the *read*. Distinct from SchemaError because it
+ * says nothing about the account and clears on its own: retrying is correct,
+ * where falling through to the probe would spend quota to learn nothing.
+ */
+export class RateLimitError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'RateLimitError'
+  }
+}
+
+/**
  * Field paths per window, confirmed against the live response in the
  * 2026-08-03 spike. Per-model keys are nullable on plans without that limit.
  */
@@ -100,6 +112,9 @@ export async function fetchUsage(
   if (response.status === 401 || response.status === 403) {
     // The body is discarded: it can echo credential material.
     throw new AuthError(`token rejected (HTTP ${response.status})`)
+  }
+  if (response.status === 429) {
+    throw new RateLimitError('usage endpoint is throttling reads (HTTP 429)')
   }
   if (!response.ok) {
     throw new SchemaError(`usage request failed (HTTP ${response.status})`)

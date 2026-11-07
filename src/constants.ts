@@ -13,6 +13,27 @@ export const REQUEST_TIMEOUT_MS = 8_000
 /** Timeout for the complete short-lived Codex app-server usage read. */
 export const CODEX_USAGE_TIMEOUT_MS = 8_000
 
+/** Timeout for a Cursor dashboard usage read (including optional token refresh). */
+export const CURSOR_USAGE_TIMEOUT_MS = 8_000
+
+/** Timeout for a Grok billing usage read (including optional token refresh). */
+export const GROK_USAGE_TIMEOUT_MS = 8_000
+
+/** Cursor Dashboard Connect RPC origin. */
+export const CURSOR_API_BASE = 'https://api2.cursor.sh'
+
+/** Cursor OAuth client id embedded in the desktop app. */
+export const CURSOR_OAUTH_CLIENT_ID = 'KbZUR41cY7W6zRSdpSUJ7I7mLYBKOCmB'
+
+/** Grok CLI chat-proxy origin used for billing and identity reads. */
+export const GROK_API_BASE = 'https://cli-chat-proxy.grok.com/v1'
+
+/** SpaceXAI OIDC token endpoint for refreshing a Grok CLI session. */
+export const GROK_OAUTH_TOKEN_ENDPOINT = 'https://auth.x.ai/oauth2/token'
+
+/** Client-mode header the Grok CLI sends on first-party proxy requests. */
+export const GROK_CLIENT_MODE = 'cli'
+
 /** Timeout for one priming session. */
 export const PRIME_TIMEOUT_MS = 60_000
 
@@ -48,19 +69,54 @@ export const USAGE_ENDPOINTS = [
 export const OAUTH_BETA_HEADER = 'oauth-2025-04-20'
 
 /**
- * Rate-limit response headers read by the probe path. Values are confirmed
- * against a real debug log during the spike; the parser and its tests reference
- * these constants, so a correction here needs no test changes.
+ * Rate-limit response headers, read straight off an inference response.
+ *
+ * Two things changed together on 2026-08-08, and they must be understood
+ * together: `claude --debug api` stopped logging these headers at all (so the
+ * old log-scraping probe silently produced nothing), and the names moved from
+ * `-remaining` to `-utilization`. The sense inverted with the name —
+ * `-utilization` is the fraction of budget *spent*, where `-remaining` was the
+ * fraction *left*. Renaming these without also flipping the arithmetic would
+ * report a fresh account as exhausted and an exhausted one as fresh.
  */
 export const HEADER_KEYS = {
   fiveHourStatus: 'anthropic-ratelimit-unified-5h-status',
   fiveHourReset: 'anthropic-ratelimit-unified-5h-reset',
-  fiveHourRemaining: 'anthropic-ratelimit-unified-5h-remaining',
+  fiveHourUtilization: 'anthropic-ratelimit-unified-5h-utilization',
   weeklyStatus: 'anthropic-ratelimit-unified-7d-status',
   weeklyReset: 'anthropic-ratelimit-unified-7d-reset',
-  weeklyRemaining: 'anthropic-ratelimit-unified-7d-remaining',
-  opusWeeklyRemaining: 'anthropic-ratelimit-unified-7d-opus-remaining',
+  weeklyUtilization: 'anthropic-ratelimit-unified-7d-utilization',
+  opusWeeklyUtilization: 'anthropic-ratelimit-unified-7d-opus-utilization',
 } as const
+
+/**
+ * The probe sends a real inference request and reads its response headers.
+ * There is no cheaper source: a malformed request is rejected by validation
+ * before the rate limiter annotates the response, and `count_tokens` returns
+ * no rate-limit headers, so both come back bare.
+ */
+export const PROBE_ENDPOINT = 'https://api.anthropic.com/v1/messages'
+
+/** Required on a direct Messages API call. */
+export const ANTHROPIC_VERSION = '2023-06-01'
+
+/** Concrete id rather than the `haiku` CLI alias: the API resolves no aliases. */
+export const PROBE_MODEL = 'claude-haiku-4-5-20251001'
+
+/** The response headers are the payload; the completion itself is waste. */
+export const PROBE_MAX_TOKENS = 1
+export const PROBE_PROMPT = 'hi'
+
+/** Inference is slower than a metadata read, so this is not REQUEST_TIMEOUT_MS. */
+export const PROBE_TIMEOUT_MS = 20_000
+
+/**
+ * The usage endpoint throttles reads independently of account budget, and does
+ * so transiently. Retrying costs nothing; falling through to the probe would
+ * spend real quota to answer a question the API was about to answer for free.
+ */
+export const USAGE_RETRY_ATTEMPTS = 3
+export const USAGE_RETRY_DELAY_MS = 400
 
 /** OAuth token endpoint used to refresh an expired access token. */
 export const OAUTH_TOKEN_ENDPOINT = 'https://platform.claude.com/v1/oauth/token'
