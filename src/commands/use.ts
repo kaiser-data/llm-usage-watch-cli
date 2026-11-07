@@ -8,6 +8,7 @@ import { loadRegistry, saveRegistry } from '../registry'
 import type { Account } from '../types'
 import { collectUsage, type UsageDeps } from '../usage'
 import type { Io } from './status'
+import { deriveId } from '../live-sync'
 
 export type UseDeps = {
   registryFile: string
@@ -17,23 +18,6 @@ export type UseDeps = {
   keychain: Keychain
   login: LoginStore
   fetchIdentity: (token: string) => Promise<Identity | null>
-}
-
-const ID_MAX = 32
-
-/** An id derived from an email local part, kept within the registry's pattern. */
-function deriveId(email: string, taken: Set<string>): string {
-  const base = (email.split('@')[0] ?? '')
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, '-')
-    .replace(/^[^a-z0-9]+/, '')
-    .slice(0, ID_MAX)
-  const seed = base === '' ? 'account' : base
-  if (!taken.has(seed)) return seed
-  for (let suffix = 2; ; suffix += 1) {
-    const candidate = `${seed.slice(0, ID_MAX - 3)}-${suffix}`
-    if (!taken.has(candidate)) return candidate
-  }
 }
 
 /**
@@ -89,7 +73,7 @@ export async function runUse(
   if (isLegacyCredential(target)) {
     io.err(`"${targetId}" was stored before cuw kept the full login blob, so it`)
     io.err('cannot be restored without losing plan metadata.')
-    io.err(`Re-add it: claude auth login && ${reAddHint(targetId)}`)
+    io.err(`Sign it back in with \`${reAddHint(targetId)}\``)
     return 2
   }
 

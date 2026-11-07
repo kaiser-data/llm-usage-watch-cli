@@ -114,6 +114,25 @@ function refreshedRaw(
   return { ...raw, ...next }
 }
 
+/**
+ * RFC 6749 §5.2 error codes are bare snake_case words. Matching that shape is
+ * what makes the value safe to display: a token, a quoted body, or a prose
+ * sentence cannot satisfy it, so nothing secret survives the filter.
+ * `error_description` is free-form and is never read.
+ */
+const OAUTH_ERROR_CODE = /^[a-z][a-z_]{2,39}$/
+
+async function oauthErrorCode(response: Response): Promise<string | null> {
+  let payload: unknown
+  try {
+    payload = await response.json()
+  } catch {
+    return null
+  }
+  const code = asRecord(payload)?.error
+  return typeof code === 'string' && OAUTH_ERROR_CODE.test(code) ? code : null
+}
+
 export type RefreshDeps = { fetcher: typeof fetch; now: number }
 
 export async function refreshCredential(
@@ -131,9 +150,13 @@ export async function refreshCredential(
   })
 
   if (!response.ok) {
-    // The body is discarded: it can echo the submitted refresh token.
+    // The body at large stays discarded — it can echo the submitted refresh
+    // token — but the bare error code is worth keeping: `invalid_grant` (dead or
+    // already-rotated) and a server-side fault are otherwise the same opaque 400.
+    const code = await oauthErrorCode(response)
+    const detail = code === null ? `HTTP ${response.status}` : `HTTP ${response.status}: ${code}`
     throw new CredentialError(
-      `refresh token expired or rejected (HTTP ${response.status}) — re-add the account with \`${RE_ADD_HINT}\``,
+      `refresh token expired or rejected (${detail}) — sign it back in with \`${RE_ADD_HINT}\``,
       'refresh-rejected',
     )
   }

@@ -1,7 +1,21 @@
 import { describe, expect, test } from 'bun:test'
 import { collectUsage, type UsageDeps } from '../src/usage'
-import { AuthError, SchemaError } from '../src/usage-api'
+import { AuthError, RateLimitError, SchemaError } from '../src/usage-api'
+import { CredentialError } from '../src/credentials'
+import { RE_ADD_HINT } from '../src/hints'
 import type { Account, UsageWindows } from '../src/types'
+
+/** A keychain whose `get` fails for account `a` and succeeds for every other. */
+function keychainFailing(error: unknown) {
+  return {
+    get: async (id: string) => {
+      if (id === 'a') throw error
+      return 'tok'
+    },
+    set: async () => {},
+    remove: async () => {},
+  }
+}
 
 const WINDOWS: UsageWindows = {
   fiveHourPct: 20,
@@ -25,6 +39,7 @@ function deps(overrides: Partial<UsageDeps> = {}): UsageDeps {
     },
     fetchWindows: async () => WINDOWS,
     probeWindows: async () => WINDOWS,
+    sleep: async () => {},
     ...overrides,
   }
 }
@@ -43,6 +58,60 @@ describe('collectUsage', () => {
     } }))
     expect(rows[0]!.error?.cause).toBe('no-token')
     expect(rows[0]!.source).toBe('none')
+    expect(rows[1]!.error).toBeNull()
+  })
+
+  // A credential that cannot be turned into a token used to throw straight out
+  // of collectOne, rejecting collectUsage's Promise.all and taking every other
+  // account's row down with it — including under `cuw doctor`, whose whole job
+  // is to report exactly this.
+  test('fails only the account whose refresh token was rejected', async () => {
+    const rows = await collectUsage(accounts, deps({
+      keychain: keychainFailing(
+        new CredentialError(
+          `refresh token expired or rejected (HTTP 400) — re-add the account with \`${RE_ADD_HINT}\``,
+          'refresh-rejected',
+        ),
+      ),
+    }))
+    expect(rows[0]!.error?.cause).toBe('auth')
+    expect(rows[0]!.source).toBe('none')
+    expect(rows[1]!.error).toBeNull()
+    expect(rows[1]!.source).toBe('api')
+  })
+
+  test('points the re-add hint at the account that actually failed', async () => {
+    const rows = await collectUsage(accounts, deps({
+      keychain: keychainFailing(
+        new CredentialError(
+          `refresh token expired or rejected (HTTP 400) — re-add the account with \`${RE_ADD_HINT}\``,
+          'refresh-rejected',
+        ),
+      ),
+    }))
+    expect(rows[0]!.error?.message).toContain('cuw login a')
+    expect(rows[0]!.error?.message).not.toContain('<id>')
+  })
+
+  test('reports a malformed stored credential without probing', async () => {
+    let probed = false
+    const rows = await collectUsage(accounts, deps({
+      keychain: keychainFailing(
+        new CredentialError('credential has no refresh token', 'malformed'),
+      ),
+      probeWindows: async () => { probed = true; return WINDOWS },
+    }))
+    expect(probed).toBe(false)
+    expect(rows[0]!.error?.cause).toBe('auth')
+    expect(rows[0]!.error?.message).toContain('no refresh token')
+  })
+
+  test('survives a keychain that fails for reasons of its own', async () => {
+    const rows = await collectUsage(accounts, deps({
+      keychain: keychainFailing(new Error('security: exit status 1')),
+    }))
+    expect(rows[0]!.error?.cause).toBe('auth')
+    expect(rows[0]!.error?.message).toContain('security: exit status 1')
     expect(rows[1]!.error).toBeNull()
   })
 
@@ -70,6 +139,52 @@ describe('collectUsage', () => {
       fetchWindows: async () => { throw new TypeError('fetch failed') },
     }))
     expect(rows[0]!.source).toBe('probe')
+  })
+
+  test('retries a throttled usage read rather than probing', async () => {
+    // The probe spends real quota and opens a window. A 429 on the metadata
+    // endpoint says nothing about the account, and clears on its own.
+    let attempts = 0
+    let probed = false
+    const rows = await collectUsage(accounts, deps({
+      fetchWindows: async () => {
+        attempts += 1
+        if (attempts <= 2) throw new RateLimitError('throttled (HTTP 429)')
+        return WINDOWS
+      },
+      probeWindows: async () => { probed = true; return WINDOWS },
+    }))
+    expect(probed).toBe(false)
+    expect(rows[0]!.source).toBe('api')
+    expect(rows[0]!.fiveHourPct).toBe(20)
+  })
+
+  test('reports a persistent throttle without spending a probe', async () => {
+    let probed = false
+    const rows = await collectUsage(accounts, deps({
+      fetchWindows: async () => { throw new RateLimitError('throttled (HTTP 429)') },
+      probeWindows: async () => { probed = true; return WINDOWS },
+    }))
+    expect(probed).toBe(false)
+    expect(rows[0]!.error?.cause).toBe('rate-limited')
+    expect(rows[0]!.fiveHourPct).toBeNull()
+  })
+
+  test('reports auth when the probe rejects the token', async () => {
+    const rows = await collectUsage(accounts, deps({
+      fetchWindows: async () => { throw new SchemaError('unrecognized') },
+      probeWindows: async () => { throw new AuthError('token rejected (HTTP 401)') },
+    }))
+    expect(rows[0]!.error?.cause).toBe('auth')
+  })
+
+  test('does not tell the user to run doctor, since doctor prints this too', async () => {
+    const rows = await collectUsage(accounts, deps({
+      fetchWindows: async () => { throw new SchemaError('unrecognized') },
+      probeWindows: async () => { throw new Error('no rate-limit headers') },
+    }))
+    expect(rows[0]!.error?.message).not.toMatch(/cuw doctor/)
+    expect(rows[0]!.error?.message).toContain('no rate-limit headers')
   })
 
   test('reports probe-failed when both paths fail', async () => {

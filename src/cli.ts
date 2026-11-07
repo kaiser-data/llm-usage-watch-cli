@@ -1,17 +1,25 @@
 #!/usr/bin/env bun
-import { mkdir, mkdtemp, readFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   CLAUDE_CREDENTIAL_SERVICE,
   CODEX_USAGE_TIMEOUT_MS,
+  CURSOR_USAGE_TIMEOUT_MS,
   DEFAULT_TERM_WIDTH,
+  GROK_USAGE_TIMEOUT_MS,
+  PROBE_ENDPOINT,
+  PROBE_MODEL,
+  PROBE_TIMEOUT_MS,
   REQUEST_TIMEOUT_MS,
   PROFILE_ENDPOINT,
   USAGE_ENDPOINTS,
 } from './constants'
 import { createKeychain, realRunner } from './keychain'
 import { collectCodexUsage, realCodexAppServerSpawner } from './codex-app-server'
+import { realCursorAuthStore } from './cursor-auth'
+import { buildCollectCursorUsage } from './cursor-usage'
+import { realGrokAuthStore } from './grok-auth'
+import { buildCollectGrokUsage } from './grok-usage'
 import { createRefreshingTokenSource } from './token-source'
 import { loadRegistry, registryPath } from './registry'
 import { realSpawner } from './spawn'
@@ -20,19 +28,26 @@ import { fetchIdentity, fetchSubscription } from './profile'
 import { probeUsage } from './usage-probe'
 import { EXIT_OK, EXIT_USAGE, runStatus, type Io } from './commands/status'
 import { createLoginStore } from './login'
+import { describeSync, syncLiveLogin, type SyncResult } from './live-sync'
 import { runAdd } from './commands/add'
+import { runLogin } from './commands/login'
+import { createIsolatedLogin, realInteractiveSpawner } from './claude-login'
+import { CredentialError } from './credentials'
 import { runUse } from './commands/use'
 import { runRm } from './commands/rm'
 import { runPrime } from './commands/prime'
 import { runDoctor } from './commands/doctor'
 import type { UsageDeps } from './usage'
 
-const HELP = `cuw — Claude and active Codex account usage
+const HELP = `cuw — Claude, Codex, Cursor, and Grok usage
 
 Usage:
-  cuw [status] [--json]     Show configured Claude and active Codex usage
+  cuw [status] [--json]     Show Claude, Codex, Cursor, and Grok usage
   cuw use [<id>]            Switch the Claude Code login to a subscription
-  cuw add <id>              Store a long-lived token for a subscription
+  cuw sync [--quiet]        Import the terminal's Claude login (runs automatically)
+  cuw login                 Sign every expired subscription back in
+  cuw login <id> [<id>...]  Sign in (or add) specific subscriptions
+  cuw add <id>              Store the terminal's current login as <id>
   cuw add --force <id>      Re-record an account from the current login
   cuw rm <id>               Remove a subscription
   cuw prime <id>            Start the five-hour window on a subscription
@@ -40,6 +55,8 @@ Usage:
   cuw doctor                Diagnose tokens and data paths
   cuw --help                Show this message
 `
+
+const AUTO_SYNC_COMMANDS = new Set(['status', 'use', 'prime', 'doctor', 'login'])
 
 export function home(): string {
   const value = process.env.HOME
@@ -61,15 +78,34 @@ export async function readLoginCredential(): Promise<string | null> {
   return blob === '' ? null : blob
 }
 
+/** Imports the live Claude Code login into the matching account. */
+export function syncNow(): Promise<SyncResult> {
+  return syncLiveLogin({
+    registryFile: registryPath(home()),
+    keychain: createKeychain(realRunner),
+    login: createLoginStore(realRunner),
+    fetchIdentity: token => fetchIdentity(token, {
+      fetcher: fetch,
+      endpoint: PROFILE_ENDPOINT,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      now: new Date(),
+    }),
+    now: () => Date.now(),
+  })
+}
+
 export async function buildUsageDeps(): Promise<UsageDeps> {
   const keychain = createRefreshingTokenSource(createKeychain(realRunner), {
     fetcher: fetch,
     now: () => Date.now(),
+    login: createLoginStore(realRunner),
+    resync: async () => { await syncNow() },
   })
-  const scratchDir = await mkdtemp(join(tmpdir(), 'cuw-scratch-'))
-
   // Test-only, read-only escape hatches used by the integration suite to point
   // at a stub server. CUW_FAKE_TOKEN supplies a token; it never reveals one.
+  // CUW_PROBE_ENDPOINT exists so the fallback can be covered end to end without
+  // spending real quota — the probe sends a live inference request, so an
+  // uncovered fallback is otherwise the one path no test dares to exercise.
   const endpoint = process.env.CUW_ENDPOINT ?? USAGE_ENDPOINTS[0]
   const fakeToken = process.env.CUW_FAKE_TOKEN
   const resolvedKeychain = fakeToken
@@ -93,11 +129,10 @@ export async function buildUsageDeps(): Promise<UsageDeps> {
       }),
     probeWindows: token =>
       probeUsage(token, {
-        spawn: realSpawner,
-        scratchDir,
-        configDir: join(configHome(), 'profiles', 'probe'),
-        logPath: join(scratchDir, 'debug.log'),
-        readLog: path => readFile(path, 'utf8'),
+        fetcher: fetch,
+        endpoint: process.env.CUW_PROBE_ENDPOINT ?? PROBE_ENDPOINT,
+        model: PROBE_MODEL,
+        timeoutMs: PROBE_TIMEOUT_MS,
       }),
   }
 }
@@ -124,6 +159,31 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   const [command = 'status', ...rest] = argv
+
+  if (command === 'sync') {
+    let result: SyncResult
+    try {
+      result = await syncNow()
+    } catch (error) {
+      if (!rest.includes('--quiet')) io.err(`not synced: ${(error as Error).message}`)
+      return EXIT_OK
+    }
+    if (!rest.includes('--quiet')) io.out(describeSync(result) ?? '')
+    return EXIT_OK
+  }
+
+  // Keeps accounts fresh with no manual step: whatever the terminal is logged
+  // into — and whatever Claude Code renewed — lands in the matching account
+  // before it is read. Never fatal; a failure only means nothing was imported.
+  if (AUTO_SYNC_COMMANDS.has(command) && process.env.CUW_FAKE_TOKEN === undefined) {
+    try {
+      const result = await syncNow()
+      if (result.kind === 'added' || result.kind === 'updated') io.err(describeSync(result)!)
+    } catch {
+      // Ignored by design.
+    }
+  }
+
   const accounts = await loadRegistry(registryPath(home()))
 
   switch (command) {
@@ -136,6 +196,12 @@ export async function main(argv: string[]): Promise<number> {
           collectCodex: () => collectCodexUsage({
             spawn: realCodexAppServerSpawner,
             timeoutMs: CODEX_USAGE_TIMEOUT_MS,
+          }),
+          collectCursor: buildCollectCursorUsage(realCursorAuthStore(), {
+            timeoutMs: CURSOR_USAGE_TIMEOUT_MS,
+          }),
+          collectGrok: buildCollectGrokUsage(realGrokAuthStore(), {
+            timeoutMs: GROK_USAGE_TIMEOUT_MS,
           }),
           color: process.stdout.isTTY === true,
           width: process.stdout.columns ?? DEFAULT_TERM_WIDTH,
@@ -180,6 +246,36 @@ export async function main(argv: string[]): Promise<number> {
           now: new Date(),
         }),
       }, io, { force: rest.includes('--force') })
+    }
+
+    case 'login': {
+      const ids = rest.filter(argument => !argument.startsWith('--'))
+      const raw = createKeychain(realRunner)
+      const refreshing = createRefreshingTokenSource(raw, { fetcher: fetch, now: () => Date.now() })
+      return runLogin(ids, {
+        registryFile: registryPath(home()),
+        keychain: raw,
+        signIn: createIsolatedLogin({
+          run: realRunner,
+          spawn: realInteractiveSpawner,
+          configDir: join(configHome(), 'profiles', 'login'),
+        }),
+        fetchIdentity: token => fetchIdentity(token, {
+          fetcher: fetch,
+          endpoint: PROFILE_ENDPOINT,
+          timeoutMs: REQUEST_TIMEOUT_MS,
+          now: new Date(),
+        }),
+        needsLogin: async id => {
+          try {
+            return (await refreshing.get(id)) === null
+          } catch (error) {
+            // Only a credential that is provably dead qualifies; a network
+            // failure says nothing about the account.
+            return error instanceof CredentialError
+          }
+        },
+      }, io)
     }
 
     case 'rm': {

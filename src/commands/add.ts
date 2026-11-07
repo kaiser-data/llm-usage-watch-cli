@@ -1,6 +1,7 @@
 import { parseCredential, serializeCredential } from '../credentials'
 import type { Keychain } from '../keychain'
 import type { Identity } from '../profile'
+import type { Credential } from '../types'
 import { loadRegistry, RegistryError, saveRegistry } from '../registry'
 import type { Io } from './status'
 
@@ -71,8 +72,32 @@ export async function runAdd(
     return 2
   }
 
-  // Re-recording keeps the row where it was: `order` and `label` are the user's
-  // arrangement, not properties of the credential being refreshed.
+  const saved = await recordAccount(id, credential, identity, deps)
+  if (saved !== 'created' && saved !== 'updated') {
+    io.err(saved.error)
+    return 1
+  }
+
+  io.out(existing === undefined
+    ? `stored "${id}" — run \`cuw\` to see it`
+    : `re-recorded "${id}" (${identity.email}) — \`cuw use ${id}\` can now restore it`)
+  return 0
+}
+
+/**
+ * Writes one account's registry entry and its credential. Re-recording keeps
+ * the row where it was: `order` and `label` are the user's arrangement, not
+ * properties of the credential being refreshed. The registry is validated
+ * before the Keychain is touched, so a bad id leaves no orphan item.
+ */
+export async function recordAccount(
+  id: string,
+  credential: Credential,
+  identity: Identity,
+  deps: Pick<AddDeps, 'registryFile' | 'keychain'>,
+): Promise<'created' | 'updated' | { error: string }> {
+  const accounts = await loadRegistry(deps.registryFile)
+  const existing = accounts.find(account => account.id === id)
   const order = accounts.reduce((max, account) => Math.max(max, account.order), 0) + 1
   const updated = existing === undefined
     ? [...accounts, { id, label: id, email: identity.email, order, uuid: identity.uuid }]
@@ -80,20 +105,13 @@ export async function runAdd(
       ? { ...account, email: identity.email, uuid: identity.uuid }
       : account)
 
-  // Validate before touching the Keychain, so a bad id leaves no orphan item.
   try {
     await saveRegistry(deps.registryFile, updated)
   } catch (error) {
-    if (error instanceof RegistryError) {
-      io.err(error.message)
-      return 1
-    }
+    if (error instanceof RegistryError) return { error: error.message }
     throw error
   }
 
   await deps.keychain.set(id, serializeCredential(credential))
-  io.out(existing === undefined
-    ? `stored "${id}" — run \`cuw\` to see it`
-    : `re-recorded "${id}" (${identity.email}) — \`cuw use ${id}\` can now restore it`)
-  return 0
+  return existing === undefined ? 'created' : 'updated'
 }

@@ -7,7 +7,8 @@
   "scripts": {
     "test": "bun test",
     "coverage": "bun test --coverage",
-    "build": "bun build --compile --minify src/cli.ts --outfile dist/cuw"
+    "build": "bun build --compile --minify src/cli.ts --outfile dist/cuw && codesign --force --sign - dist/cuw",
+    "install-cli": "bun run build && mkdir -p \"$HOME/.local/bin\" && ln -sf \"$PWD/dist/cuw\" \"$HOME/.local/bin/cuw\" && echo \"cuw installed -> $HOME/.local/bin/cuw\""
   },
   "devDependencies": {
     "@types/bun": "latest"

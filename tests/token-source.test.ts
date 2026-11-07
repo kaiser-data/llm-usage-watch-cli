@@ -76,6 +76,128 @@ describe('createRefreshingTokenSource', () => {
     const keychain = fakeKeychain({ main: serializeCredential(STALE) })
     const failing = (async () => new Response('{}', { status: 400 })) as unknown as typeof fetch
     const source = createRefreshingTokenSource(keychain, { fetcher: failing, now: () => NOW })
-    expect(source.get('main')).rejects.toThrow(/re-add/i)
+    expect(source.get('main')).rejects.toThrow(/cuw login/i)
+  })
+
+  // The endpoint rotates refresh tokens, so a spent one is single-use. Two
+  // callers that each read the same stored credential and each POST it leave
+  // one winner and one spurious "expired" — with the loser able to overwrite
+  // the winner's freshly rotated token on its way out.
+  test('refreshes once when several callers race for the same account', async () => {
+    const keychain = fakeKeychain({ main: serializeCredential(STALE) })
+    let refreshes = 0
+    const counting = (async () => {
+      refreshes += 1
+      return new Response(JSON.stringify({
+        access_token: 'access-renewed',
+        refresh_token: 'refresh-2',
+        expires_in: 28_800,
+      }), { status: 200 })
+    }) as unknown as typeof fetch
+    const source = createRefreshingTokenSource(keychain, { fetcher: counting, now: () => NOW })
+
+    const tokens = await Promise.all([source.get('main'), source.get('main'), source.get('main')])
+    expect(refreshes).toBe(1)
+    expect(tokens).toEqual(['access-renewed', 'access-renewed', 'access-renewed'])
+  })
+
+  test('does not conflate separate accounts in the same batch', async () => {
+    const keychain = fakeKeychain({
+      main: serializeCredential(STALE),
+      other: serializeCredential({ ...STALE, refreshToken: 'refresh-other' }),
+    })
+    let refreshes = 0
+    const counting = (async () => {
+      refreshes += 1
+      return new Response(JSON.stringify({ access_token: 'access-renewed', expires_in: 60 }), { status: 200 })
+    }) as unknown as typeof fetch
+    const source = createRefreshingTokenSource(keychain, { fetcher: counting, now: () => NOW })
+
+    await Promise.all([source.get('main'), source.get('other')])
+    expect(refreshes).toBe(2)
+  })
+
+  // Another process (a second `cuw`, or the Claude CLI itself) can rotate the
+  // token between our read and our POST. Ours is then already spent, and the
+  // rejection says nothing about whether the account is still usable.
+  test('re-reads after a rejection in case another process rotated the token', async () => {
+    const keychain = fakeKeychain({ main: serializeCredential(STALE) })
+    const failing = (async () => {
+      // Simulate the winner persisting its rotated credential mid-flight.
+      await keychain.set('main', serializeCredential({
+        ...STALE,
+        accessToken: 'access-by-other-process',
+        refreshToken: 'refresh-rotated',
+        expiresAt: NOW + 3_600_000,
+      }))
+      return new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 })
+    }) as unknown as typeof fetch
+    const source = createRefreshingTokenSource(keychain, { fetcher: failing, now: () => NOW })
+
+    expect(await source.get('main')).toBe('access-by-other-process')
+  })
+
+  test('still reports a genuinely dead token when nothing rotated', async () => {
+    const keychain = fakeKeychain({ main: serializeCredential(STALE) })
+    let attempts = 0
+    const failing = (async () => {
+      attempts += 1
+      return new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 })
+    }) as unknown as typeof fetch
+    const source = createRefreshingTokenSource(keychain, { fetcher: failing, now: () => NOW })
+
+    expect(source.get('main')).rejects.toThrow(/cuw login/i)
+    // The stored token never changed, so there is nothing to retry with.
+    expect(attempts).toBeLessThanOrEqual(1)
+  })
+})
+
+describe('createRefreshingTokenSource and the live login', () => {
+  const SHARED: Credential = { ...STALE, raw: { accessToken: 'access-stale', refreshToken: 'refresh-1', subscriptionType: 'pro' } }
+
+  function fakeLogin(blob: Record<string, unknown> | null) {
+    const writes: Record<string, unknown>[] = []
+    return {
+      writes,
+      store: {
+        read: async () => blob,
+        write: async (next: Record<string, unknown>) => { writes.push(next) },
+      },
+    }
+  }
+
+  test('writes the rotated token back when Claude Code holds the same login', async () => {
+    const keychain = fakeKeychain({ main: serializeCredential(SHARED) })
+    const login = fakeLogin({ claudeAiOauth: SHARED.raw, mcpOAuth: { keep: true } })
+    const source = createRefreshingTokenSource(keychain, { fetcher: okFetcher, now: () => NOW, login: login.store })
+
+    expect(await source.get('main')).toBe('access-renewed')
+    expect(login.writes).toHaveLength(1)
+    const written = login.writes[0] as { claudeAiOauth: Record<string, unknown>; mcpOAuth: unknown }
+    expect(written.claudeAiOauth.refreshToken).toBe('refresh-2')
+    expect(written.claudeAiOauth.subscriptionType).toBe('pro')
+    expect(written.mcpOAuth).toEqual({ keep: true })
+  })
+
+  test('leaves a live login for another account alone', async () => {
+    const keychain = fakeKeychain({ main: serializeCredential(SHARED) })
+    const login = fakeLogin({ claudeAiOauth: { ...SHARED.raw, refreshToken: 'someone-else' } })
+    const source = createRefreshingTokenSource(keychain, { fetcher: okFetcher, now: () => NOW, login: login.store })
+
+    await source.get('main')
+    expect(login.writes).toEqual([])
+  })
+
+  test('re-imports the live login before trusting a rejection', async () => {
+    const keychain = fakeKeychain({ main: serializeCredential(STALE) })
+    const failing = (async () => new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 })) as unknown as typeof fetch
+    const source = createRefreshingTokenSource(keychain, {
+      fetcher: failing,
+      now: () => NOW,
+      // Claude Code renewed this account; the sync drops its fresh copy in.
+      resync: async () => { keychain.store.set('main', serializeCredential({ ...FRESH, refreshToken: 'refresh-live', accessToken: 'access-live' })) },
+    })
+
+    expect(await source.get('main')).toBe('access-live')
   })
 })
